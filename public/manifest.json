@@ -1,0 +1,21 @@
+{
+  "name": "Comunicats de feina - Ajuntament de Llucmajor",
+  "short_name": "Feina Llucmajor",
+  "description": "Aplicació per a comunicats de feina de la brigada de Llucmajor.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2B6CB0",
+  "icons": [
+    {
+      "src": "/ajuntament.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/ajuntament.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
