@@ -1,23 +1,82 @@
-import { useState } from "react";
+import { updatePassword } from "firebase/auth";
+import { useState, useEffect } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
+import { getFirestore, getDoc, doc, setDoc } from "firebase/firestore";
 import { auth } from "./firebase";
 import { useNavigate } from "react-router-dom";
 
+const db = getFirestore();
+
 function Login() {
+  const [novaContrasenya, setNovaContrasenya] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [dades, setDades] = useState(null);
   const navigate = useNavigate();
+
+  // 🔥 Carregar dades de l'usuari loguejat
+  useEffect(() => {
+    const fetchDades = async () => {
+      if (auth.currentUser) {
+        const docSnap = await getDoc(doc(db, "usuaris", auth.currentUser.uid));
+        if (docSnap.exists()) {
+          setDades(docSnap.data());
+        }
+      }
+    };
+    fetchDades();
+  }, [auth.currentUser]);
+
+  const handleCanviContrasenya = async () => {
+  try {
+    const usuari = auth.currentUser;
+    await updatePassword(usuari, novaContrasenya);
+    await setDoc(doc(db, "usuaris", usuari.uid), { haCanviatContrasenya: true }, { merge: true });
+    alert("✅ Contrasenya actualitzada correctament!");
+    navigate("/home");  // 👉 redirecciona a la pàgina principal
+  } catch (error) {
+    console.error("Error canviant la contrasenya:", error);
+    alert("❌ Error canviant la contrasenya");
+  }
+};
+
 
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
       await signInWithEmailAndPassword(auth, email, password);
+
+      // 📥 Després de loguejar, carreguem dades de Firestore
+      const docSnap = await getDoc(doc(db, "usuaris", auth.currentUser.uid));
+      if (docSnap.exists()) {
+        setDades(docSnap.data());
+      }
+
       navigate("/home");
     } catch (error) {
       alert("Usuari o contrasenya incorrectes.");
     }
   };
 
+  // 🔒 Si dades carregades i no ha canviat contrasenya → mostrar formulari canvi contrasenya
+  if (dades && !dades.haCanviatContrasenya) {
+    return (
+      <div style={{ padding: "20px", textAlign: "center" }}>
+        <h2>Canvia la contrasenya</h2>
+        <input
+          type="password"
+          value={novaContrasenya}
+          onChange={e => setNovaContrasenya(e.target.value)}
+          placeholder="Nova contrasenya"
+          style={{ padding: "8px", width: "200px", margin: "10px 0" }}
+        />
+        <br />
+        <button onClick={handleCanviContrasenya}>Canviar</button>
+      </div>
+    );
+  }
+
+  // 🏠 Formulari de login
   return (
     <div style={{
       display: "flex",
@@ -36,10 +95,8 @@ function Login() {
         Comunicats de feina - Brigada
       </h2>
 
-      {/* Logo */}
       <img src="/ajuntament.png" alt="Logo Ajuntament" style={{ width: "120px", marginBottom: "30px" }} />
 
-      {/* Formulari de login */}
       <form onSubmit={handleLogin} style={{
         background: "white",
         padding: "30px",
