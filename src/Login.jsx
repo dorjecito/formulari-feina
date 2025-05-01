@@ -1,14 +1,14 @@
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { getDoc, doc } from "firebase/firestore";
-import { auth, db } from "./firebase"; // assegura't que exportes auth i db correctament
+import React, { useState } from "react";
+import { auth, db } from "./firebase";
+import { signInWithEmailAndPassword, updatePassword } from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
-import { useState } from "react";
 
 function Login() {
+  const [novaContrasenya, setNovaContrasenya] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [novaContrasenya, setNovaContrasenya] = useState("");
-  const [dades, setDades] = useState({ haCanviatContrasenya: true });
+  const [dades, setDades] = useState({ haCanviatContrasenya: true }); // inicialment true
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
@@ -17,19 +17,17 @@ function Login() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const usuari = userCredential.user;
 
-      // 👇 Comprovem si ha canviat la contrasenya a Firestore
+      // Aquí pots recuperar si ha canviat contrasenya o no des de Firestore
       const docRef = doc(db, "usuaris", usuari.uid);
       const docSnap = await getDoc(docRef);
-
       if (docSnap.exists() && !docSnap.data().haCanviatContrasenya) {
-        setDades({ haCanviatContrasenya: false });
+        setDades({ haCanviatContrasenya: false }); // mostrar formulari canvi
       } else {
-        setDades({ haCanviatContrasenya: true });
-        navigate("/home"); // ja pot entrar si la contrasenya està canviada
+        navigate("/home"); // accés normal
       }
-    } catch (error) {
-      alert("Usuari o contrasenya incorrectes.");
-      console.error("Error login:", error);
+    } catch (err) {
+      alert("Error d'inici de sessió: usuari o contrasenya incorrectes.");
+      console.error(err);
     }
   };
 
@@ -38,11 +36,11 @@ function Login() {
       const usuari = auth.currentUser;
       await updatePassword(usuari, novaContrasenya);
       await setDoc(doc(db, "usuaris", usuari.uid), { haCanviatContrasenya: true }, { merge: true });
-      alert("✅ Contrasenya actualitzada correctament!");
+      alert("✅ Contrasenya canviada correctament!");
       navigate("/home");
-    } catch (error) {
-      console.error("Error canviant la contrasenya:", error);
-      alert("❌ Error canviant la contrasenya");
+    } catch (err) {
+      alert("❌ Error canviant la contrasenya.");
+      console.error(err);
     }
   };
 
@@ -53,69 +51,38 @@ function Login() {
         <input
           type="password"
           value={novaContrasenya}
-          onChange={e => setNovaContrasenya(e.target.value)}
+          onChange={(e) => setNovaContrasenya(e.target.value)}
           placeholder="Nova contrasenya"
-          style={{ padding: "8px", width: "200px", margin: "10px 0" }}
+          style={{ padding: "8px", margin: "10px" }}
         />
         <br />
-        <button onClick={handleCanviContrasenya}>Canviar</button>
+        <button onClick={handleCanviContrasenya} style={{ padding: "10px", backgroundColor: "#2B6CB0", color: "white" }}>
+          Canviar
+        </button>
       </div>
     );
   }
 
   return (
-  <div style={{
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: "100vh",
-    backgroundColor: "#f0f4f8",
-    padding: "20px"
-  }}>
-    <h1 style={{ fontSize: "2.5rem", fontWeight: "bold", color: "#2B6CB0", marginBottom: "10px" }}>
-      Ajuntament de Llucmajor
-    </h1>
+    <div style={{
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      minHeight: "100vh",
+      backgroundColor: "#f0f4f8",
+      padding: "20px"
+    }}>
+      <h1 style={{ fontSize: "2.5rem", fontWeight: "bold", color: "#2B6CB0", marginBottom: "10px" }}>
+        Ajuntament de Llucmajor
+      </h1>
 
-    <h2 style={{ fontSize: "1.5rem", color: "#4A5568", marginBottom: "20px" }}>
-      Comunicats de feina - Brigada
-    </h2>
+      <h2 style={{ fontSize: "1.5rem", color: "#4A5568", marginBottom: "20px" }}>
+        Comunicats de feina - Brigada
+      </h2>
 
-    <img src="/ajuntament.png" alt="Logo Ajuntament" style={{ width: "120px", marginBottom: "30px" }} />
+      <img src="/ajuntament.png" alt="Logo Ajuntament" style={{ width: "120px", marginBottom: "30px" }} />
 
-    {mostrarCanvi ? (
-      <div style={{
-        background: "white",
-        padding: "30px",
-        borderRadius: "8px",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-        width: "100%",
-        maxWidth: "400px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "15px"
-      }}>
-        <h3>Canvia la contrasenya</h3>
-        <input
-          type="password"
-          value={novaContrasenya}
-          onChange={e => setNovaContrasenya(e.target.value)}
-          placeholder="Nova contrasenya"
-          style={{ padding: "10px", borderRadius: "6px", border: "1px solid #ccc" }}
-        />
-        <button onClick={handleCanviContrasenya} style={{
-          padding: "12px",
-          backgroundColor: "#2B6CB0",
-          color: "white",
-          border: "none",
-          borderRadius: "6px",
-          cursor: "pointer",
-          fontSize: "1rem"
-        }}>
-          Canviar
-        </button>
-      </div>
-    ) : (
       <form onSubmit={handleLogin} style={{
         background: "white",
         padding: "30px",
@@ -155,8 +122,8 @@ function Login() {
           Entrar
         </button>
       </form>
-    )}
-  </div>
-);
+    </div>
+  );
+}
 
 export default Login;
