@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { auth, db } from "./firebase";
 import { signInWithEmailAndPassword, updatePassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 
 function Login() {
@@ -12,24 +12,29 @@ function Login() {
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const usuari = userCredential.user;
+  e.preventDefault();
+  try {
+    console.log("Intentant login per a:", email);
 
-      // Aquí pots recuperar si ha canviat contrasenya o no des de Firestore
-      const docRef = doc(db, "usuaris", usuari.uid);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists() && !docSnap.data().haCanviatContrasenya) {
-        setDades({ haCanviatContrasenya: false }); // mostrar formulari canvi
-      } else {
-        navigate("/home"); // accés normal
-      }
-    } catch (err) {
-      alert("Error d'inici de sessió: usuari o contrasenya incorrectes.");
-      console.error(err);
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const usuari = userCredential.user;
+    console.log("Usuari autenticat:", usuari.uid);
+
+    const docRef = doc(db, "usuaris", usuari.uid);
+    const docSnap = await getDoc(docRef);
+    console.log("Firestore docSnap:", docSnap.exists() ? docSnap.data() : "No existeix el document!");
+
+    if (docSnap.exists() && !docSnap.data().haCanviatContrasenya) {
+      setDades({ haCanviatContrasenya: false }); // mostrar formulari canvi
+    } else {
+      console.log("Accés normal a /home");
+      navigate("/home"); // accés normal
     }
-  };
+  } catch (err) {
+    console.error("Error login:", err);
+    alert("Error d'inici de sessió: usuari o contrasenya incorrectes.");
+  }
+};
 
   const handleCanviContrasenya = async () => {
     try {
