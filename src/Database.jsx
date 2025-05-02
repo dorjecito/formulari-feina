@@ -3,18 +3,9 @@ import { db } from "./firebase";
 import { collection, getDocs } from "firebase/firestore";
 import { Link } from "react-router-dom";
 
-const celda = { border: "1px solid #ccc", padding: "8px", textAlign: "left" };
-
-// ✅ Funció segura per mostrar arrays, strings o valors nuls
-const safeJoin = (valor) => {
- if (Array.isArray(valor)) return valor.join(", ");
- if (typeof valor === "string") return valor;
- if (valor !== undefined && valor !== null) return String(valor);
- return "-";
-};
-
 function Database() {
  const [comunicats, setComunicats] = useState([]);
+ const [searchQuery, setSearchQuery] = useState("");
  const [loading, setLoading] = useState(true);
 
  useEffect(() => {
@@ -26,11 +17,11 @@ function Database() {
          id: doc.id,
          ...doc.data(),
        }));
-       console.log("DOCS RECUPERATS:", dades);
+       console.log("Docs recuperats:", dades);
        setComunicats(dades);
+       setLoading(false);
      } catch (error) {
        console.error("Error carregant comunicats:", error);
-     } finally {
        setLoading(false);
      }
    };
@@ -38,14 +29,33 @@ function Database() {
    fetchData();
  }, []);
 
+ const comunicatsFiltrats = comunicats.filter((comunicat) => {
+   const query = searchQuery.toLowerCase();
+   return (
+     (comunicat.data && comunicat.data.toLowerCase().includes(query)) ||
+     (comunicat.responsableBrigada && comunicat.responsableBrigada.join(", ").toLowerCase().includes(query)) ||
+     (comunicat.oficialResponsable && comunicat.oficialResponsable.join(", ").toLowerCase().includes(query)) ||
+     (comunicat.oficial && comunicat.oficial.join(", ").toLowerCase().includes(query)) ||
+     (comunicat.peo && comunicat.peo.join(", ").toLowerCase().includes(query)) ||
+     (comunicat.eines && comunicat.eines.join(", ").toLowerCase().includes(query)) ||
+     (comunicat.feines && comunicat.feines.join(", ").toLowerCase().includes(query)) ||
+     (comunicat.matricula && comunicat.matricula.join(", ").toLowerCase().includes(query)) ||
+     (comunicat.ruta && comunicat.ruta.toLowerCase().includes(query)) ||
+     (comunicat.incidencia && comunicat.incidencia.toLowerCase().includes(query)) ||
+     (comunicat.observacions && comunicat.observacions.toLowerCase().includes(query))
+   );
+ });
+
+ const celda = { border: "1px solid #ccc", padding: "8px", textAlign: "left" };
+
  if (loading) return <p>Carregant dades...</p>;
 
  if (comunicats.length === 0) {
    return (
-     <div style={{ padding: "20px" }}>
+     <div style={{ textAlign: "center", marginTop: "30px" }}>
        <h2>No hi ha comunicats guardats</h2>
        <Link to="/home">
-         <button style={{ marginTop: "20px" }}>⬅️ Tornar al Formulari</button>
+         <button>⬅️ Tornar al Formulari</button>
        </Link>
      </div>
    );
@@ -54,6 +64,22 @@ function Database() {
  return (
    <div style={{ padding: "20px" }}>
      <h2>Base de Dades de Comunicats</h2>
+
+     <input
+       type="text"
+       placeholder="🔎 Cerca comunicats..."
+       value={searchQuery}
+       onChange={(e) => setSearchQuery(e.target.value)}
+       style={{
+         padding: "8px",
+         margin: "20px 0",
+         width: "60%",
+         maxWidth: "400px",
+         borderRadius: "8px",
+         border: "1px solid #ccc"
+       }}
+     />
+
      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "20px" }}>
        <thead style={{ backgroundColor: "#4A5568", color: "white" }}>
          <tr>
@@ -71,16 +97,16 @@ function Database() {
          </tr>
        </thead>
        <tbody>
-         {comunicats.map((c) => (
+         {comunicatsFiltrats.map((c) => (
            <tr key={c.id}>
              <td style={celda}>{c.data || "-"}</td>
-             <td style={celda}>{safeJoin(c.responsableBrigada)}</td>
-             <td style={celda}>{safeJoin(c.oficialResponsable)}</td>
-             <td style={celda}>{safeJoin(c.oficial)}</td>
-             <td style={celda}>{safeJoin(c.peo)}</td>
-             <td style={celda}>{safeJoin(c.eines)}</td>
-             <td style={celda}>{safeJoin(c.feines)}</td>
-             <td style={celda}>{safeJoin(c.matricula)}</td>
+             <td style={celda}>{Array.isArray(c.responsableBrigada) ? c.responsableBrigada.join(", ") : c.responsableBrigada || "-"}</td>
+             <td style={celda}>{Array.isArray(c.oficialResponsable) ? c.oficialResponsable.join(", ") : c.oficialResponsable || "-"}</td>
+             <td style={celda}>{Array.isArray(c.oficial) ? c.oficial.join(", ") : c.oficial || "-"}</td>
+             <td style={celda}>{Array.isArray(c.peo) ? c.peo.join(", ") : c.peo || "-"}</td>
+             <td style={celda}>{Array.isArray(c.eines) ? c.eines.join(", ") : c.eines || "-"}</td>
+             <td style={celda}>{Array.isArray(c.feines) ? c.feines.join(", ") : c.feines || "-"}</td>
+             <td style={celda}>{Array.isArray(c.matricula) ? c.matricula.join(", ") : c.matricula || "-"}</td>
              <td style={celda}>{c.incidencia || "-"}</td>
              <td style={celda}>{c.ruta || "-"}</td>
              <td style={celda}>{c.observacions || "-"}</td>
@@ -88,6 +114,7 @@ function Database() {
          ))}
        </tbody>
      </table>
+
      <Link to="/home">
        <button style={{ marginTop: "20px" }}>⬅️ Tornar al Formulari</button>
      </Link>
