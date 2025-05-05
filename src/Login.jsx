@@ -1,72 +1,37 @@
 import React, { useState } from "react";
-import { auth, db } from "./firebase";
-import { signInWithEmailAndPassword, updatePassword } from "firebase/auth";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import { auth } from "./firebase";
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
 
 function Login() {
-  const [novaContrasenya, setNovaContrasenya] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [dades, setDades] = useState({ haCanviatContrasenya: true }); // inicialment true
+  const [showResetForm, setShowResetForm] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [missatge, setMissatge] = useState("");
+
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
-  e.preventDefault();
-  try {
-    console.log("Intentant login per a:", email);
-
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const usuari = userCredential.user;
-    console.log("Usuari autenticat:", usuari.uid);
-
-    const docRef = doc(db, "usuaris", usuari.uid);
-    const docSnap = await getDoc(docRef);
-    console.log("Firestore docSnap:", docSnap.exists() ? docSnap.data() : "No existeix el document!");
-
-    if (docSnap.exists() && !docSnap.data().haCanviatContrasenya) {
-      setDades({ haCanviatContrasenya: false }); // mostrar formulari canvi
-    } else {
-      console.log("Accés normal a /home");
-      navigate("/home"); // accés normal
-    }
-  } catch (err) {
-    console.error("Error login:", err);
-    alert("Error d'inici de sessió: usuari o contrasenya incorrectes.");
-  }
-};
-
-  const handleCanviContrasenya = async () => {
+    e.preventDefault();
     try {
-      const usuari = auth.currentUser;
-      await updatePassword(usuari, novaContrasenya);
-      await setDoc(doc(db, "usuaris", usuari.uid), { haCanviatContrasenya: true }, { merge: true });
-      alert("✅ Contrasenya canviada correctament!");
+      await signInWithEmailAndPassword(auth, email, password);
       navigate("/home");
     } catch (err) {
-      alert("❌ Error canviant la contrasenya.");
+      alert("Error d'inici de sessió: usuari o contrasenya incorrectes.");
       console.error(err);
     }
   };
 
-  if (!dades.haCanviatContrasenya) {
-    return (
-      <div style={{ padding: "20px", textAlign: "center" }}>
-        <h2>Canvia la contrasenya</h2>
-        <input
-          type="password"
-          value={novaContrasenya}
-          onChange={(e) => setNovaContrasenya(e.target.value)}
-          placeholder="Nova contrasenya"
-          style={{ padding: "8px", margin: "10px" }}
-        />
-        <br />
-        <button onClick={handleCanviContrasenya} style={{ padding: "10px", backgroundColor: "#2B6CB0", color: "white" }}>
-          Canviar
-        </button>
-      </div>
-    );
-  }
+  const handleResetPassword = async () => {
+    try {
+      await sendPasswordResetEmail(auth, resetEmail);
+      setMissatge("T'hem enviat un correu per restablir la contrasenya.");
+    } catch (err) {
+      setMissatge("Error enviant l'enllaç. Comprova l'adreça.");
+      console.error(err);
+    }
+  };
 
   return (
     <div style={{
@@ -88,45 +53,115 @@ function Login() {
 
       <img src="/ajuntament.png" alt="Logo Ajuntament" style={{ width: "120px", marginBottom: "30px" }} />
 
-      <form onSubmit={handleLogin} style={{
-        background: "white",
-        padding: "30px",
-        borderRadius: "8px",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-        width: "100%",
-        maxWidth: "400px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "15px"
-      }}>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Correu electrònic"
-          required
-          style={{ padding: "10px", borderRadius: "6px", border: "1px solid #ccc" }}
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Contrasenya"
-          required
-          style={{ padding: "10px", borderRadius: "6px", border: "1px solid #ccc" }}
-        />
-        <button type="submit" style={{
-          padding: "12px",
-          backgroundColor: "#2B6CB0",
-          color: "white",
-          border: "none",
-          borderRadius: "6px",
-          cursor: "pointer",
-          fontSize: "1rem"
+      {!showResetForm ? (
+        <>
+          <form onSubmit={handleLogin} style={{
+            background: "white",
+            padding: "30px",
+            borderRadius: "8px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+            width: "100%",
+            maxWidth: "400px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "15px"
+          }}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Correu electrònic"
+              required
+              style={{ padding: "10px", borderRadius: "6px", border: "1px solid #ccc" }}
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Contrasenya"
+              required
+              style={{ padding: "10px", borderRadius: "6px", border: "1px solid #ccc" }}
+            />
+            <button type="submit" style={{
+              padding: "12px",
+              backgroundColor: "#2B6CB0",
+              color: "white",
+              border: "none",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "1rem"
+            }}>
+              Entrar
+            </button>
+          </form>
+
+          <p style={{ marginTop: "15px" }}>
+            <button
+              onClick={() => setShowResetForm(true)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#2B6CB0",
+                textDecoration: "underline",
+                cursor: "pointer"
+              }}
+            >
+              Has oblidat la teva contrasenya?
+            </button>
+          </p>
+        </>
+      ) : (
+        <div style={{
+          background: "white",
+          padding: "30px",
+          borderRadius: "8px",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          width: "100%",
+          maxWidth: "400px",
+          textAlign: "center"
         }}>
-          Entrar
-        </button>
-      </form>
+          <h3>Recupera la teva contrasenya</h3>
+          <p>Introdueix el teu correu electrònic i t'enviarem un enllaç per restablir-la.</p>
+          <input
+            type="email"
+            value={resetEmail}
+            onChange={(e) => setResetEmail(e.target.value)}
+            placeholder="Correu electrònic"
+            required
+            style={{ padding: "10px", borderRadius: "6px", border: "1px solid #ccc", width: "100%", marginBottom: "15px" }}
+          />
+          <button
+            onClick={handleResetPassword}
+            style={{
+              padding: "12px",
+              backgroundColor: "#2B6CB0",
+              color: "white",
+              border: "none",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontSize: "1rem",
+              width: "100%"
+            }}
+          >
+            Envia enllaç
+          </button>
+          <p style={{ color: "green", marginTop: "15px" }}>{missatge}</p>
+          <p style={{ marginTop: "15px" }}>
+            <button
+              onClick={() => { setShowResetForm(false); setMissatge(""); }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#2B6CB0",
+                textDecoration: "underline",
+                cursor: "pointer"
+              }}
+            >
+              ⬅️ Torna a l'inici de sessió
+            </button>
+          </p>
+        </div>
+      )}
     </div>
   );
 }

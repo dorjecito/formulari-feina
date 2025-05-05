@@ -16,9 +16,14 @@ function Home() {
       <AppFinalFormulari />
       <div style={{ marginTop: "20px" }}>
         <Link to="/database">
-          <button style={{ marginRight: "10px", padding: "10px 20px" }}>Veure Comunicats</button>
+          <button style={{ marginRight: "10px", padding: "10px 20px" }}>
+            Veure Comunicats
+          </button>
         </Link>
-        <button onClick={handleLogout} style={{ padding: "10px 20px" }}>
+        <button
+          onClick={handleLogout}
+          style={{ padding: "10px 20px" }}
+        >
           Tancar Sessió
         </button>
       </div>
@@ -27,4 +32,3 @@ function Home() {
 }
 
 export default Home;
-
