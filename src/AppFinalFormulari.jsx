@@ -9,6 +9,7 @@ import html2canvas from "html2canvas";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, doc, setDoc, getDoc } from "firebase/firestore";
 import axios from "axios";
+import ImpressioComunicat from "./ImpressioComunicat";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDmtoBkI9Xv9_yWnpxtjFvOe1gU6_UwsCU",
@@ -389,6 +390,7 @@ export default function AppFinalFormulari() {
         </Marker>
         {routeCoords.length > 0 && <Polyline positions={routeCoords} color="blue" />}
       </MapContainer>
+      <ImpressioComunicat comunicat={formData} mapaRef={mapRef} />
     </div>
   );
 }

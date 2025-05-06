@@ -13,3 +13,23 @@ h1 {
 select, input, textarea, button {
   font-size: 1rem;
 }
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .comunicat-impressio, .comunicat-impressio * {
+    visibility: visible;
+  }
+
+  .comunicat-impressio {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+
+  button, .no-print {
+    display: none !important;
+  }
+}
