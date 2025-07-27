@@ -303,11 +303,13 @@ export default function AppFinalFormulari() {
   );
 
   return (
-    <div className="max-w-4xl mx-auto p-6 bg-white rounded shadow space-y-4">
-      <h1 className="text-2xl font-bold mb-4 flex items-center gap-4">
-        <img src="/ajuntament.png" alt="Logo" className="h-10" />
-        Comunicat de feina · Brigada de jardineria
-      </h1>
+    <div className="flex flex-col items-center justify-center text-center mb-6">
+  <div className="w-24 h-24 flex items-center justify-center mb-2">
+    <img src="/ajuntament.png" alt="Logo" className="max-h-full max-w-full object-contain" />
+  </div>
+  <h1 className="text-2xl font-bold">Comunicat de feina · Brigada de jardineria</h1>
+  <hr className="w-full border-t border-gray-300 mt-4" />
+
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <input type="date" value={formData.data} onChange={e => handleChange("data", e.target.value)} className="border p-2 rounded w-full" />
