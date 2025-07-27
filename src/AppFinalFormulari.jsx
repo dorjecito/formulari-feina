@@ -312,7 +312,18 @@ export default function AppFinalFormulari() {
 
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <input type="date" value={formData.data} onChange={e => handleChange("data", e.target.value)} className="border p-2 rounded w-full" />
+      <div className="mb-4">
+  <label htmlFor="data" className="block text-sm font-medium text-gray-700 mb-1">
+    📅 Data del comunicat
+  </label>
+  <input
+    type="date"
+    id="data"
+    value={formData.data}
+    onChange={(e) => handleChange("data", e)}
+    className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+  />
+</div>
 
         {blocOpcions("Responsables Brigada", responsables, setResponsables, "responsableBrigada")}
         {blocOpcions("Oficials Responsables", oficialsResponsables, setOficialsResponsables, "oficialResponsable")}
