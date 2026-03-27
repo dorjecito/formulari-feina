@@ -1,4 +1,4 @@
-// AppFinalFormulari.jsx — amb funcionalitat d'edició integrada
+// AppFinalFormulari.jsx — amb funcionalitat d'edició integrada i captura millorada del mapa
 
 import React, { useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
@@ -54,7 +54,9 @@ export default function AppFinalFormulari() {
   const [tasques, setTasques] = useState([]);
   const [oficialsEmails, setOficialsEmails] = useState({});
   const [oficialsTelefons, setOficialsTelefons] = useState({});
-  const mapRef = useRef();
+  const [mapReady, setMapReady] = useState(false);
+
+  const mapRef = useRef(null);
 
   const carregarConfiguracio = async () => {
     try {
@@ -280,6 +282,7 @@ export default function AppFinalFormulari() {
         c[1],
         c[0],
       ]);
+
       setRouteCoords(polyline);
       setStatusMsg("Ruta carregada ✅");
     } catch (err) {
@@ -295,25 +298,62 @@ export default function AppFinalFormulari() {
     try {
       let imgMapa = "";
 
-      if (mapRef.current) {
-        const canvas = await html2canvas(mapRef.current._container);
-        imgMapa = canvas.toDataURL("image/png");
+      try {
+        if (!mapRef.current || !mapReady) {
+          console.warn("⚠️ El mapa encara no està llest.");
+        } else {
+          if (routeCoords.length > 0) {
+            const bounds = L.latLngBounds(routeCoords);
+            mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
+
+          mapRef.current.invalidateSize();
+          await new Promise((resolve) => setTimeout(resolve, 600));
+
+          const mapContainer = mapRef.current.getContainer();
+
+          const canvas = await html2canvas(mapContainer, {
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: "#ffffff",
+            logging: false,
+            scale: 0.5,
+          });
+
+          imgMapa = canvas.toDataURL("image/jpeg", 0.45);
+        }
+      } catch (error) {
+        console.error("❌ Error capturant mapa:", error);
+      }
+
+      console.log("Mapa generat?", !!imgMapa);
+      console.log("Longitud mapa:", imgMapa?.length || 0);
+      console.log("Inici mapa:", imgMapa?.slice(0, 50) || "");
+
+      if (!imgMapa) {
+        alert("❌ No s'ha pogut capturar el mapa. Espera un moment i torna-ho a provar.");
+        return;
+      }
+
+      if (imgMapa.length > 45000) {
+        alert("❌ La imatge del mapa encara és massa gran per EmailJS.");
+        return;
       }
 
       const dataFormulari =
-        formData.data || new Date().toISOString().split("T")[0];
+        formData.data || new Date().toISOString().split("T")[0];
 
-      const [any, mes] = dataFormulari.split("-");
+      const [any, mes] = dataFormulari.split("-");
 
-      const dadesAmbMapa = {
-        ...formData,
-        data: dataFormulari,
-        any: Number(any),
-        mes: Number(mes),
-        mapa: imgMapa,
-        updatedAt: new Date().toISOString(),
-      };
-       
+      const dadesAmbMapa = {
+        ...formData,
+        data: dataFormulari,
+        any: Number(any),
+        mes: Number(mes),
+        mapa: imgMapa,
+        updatedAt: new Date().toISOString(),
+      };
 
       if (editId) {
         const refDoc = doc(db, "comunicatsNova", editId);
@@ -590,8 +630,12 @@ export default function AppFinalFormulari() {
       <MapContainer
         center={center}
         zoom={13}
+        preferCanvas={true}
         style={{ height: "300px", width: "100%", marginTop: "20px" }}
-        whenCreated={(mapInstance) => (mapRef.current = mapInstance)}
+        whenReady={(event) => {
+          mapRef.current = event.target;
+          setMapReady(true);
+        }}
       >
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         <Marker
@@ -604,7 +648,10 @@ export default function AppFinalFormulari() {
         </Marker>
 
         {routeCoords.length > 0 && (
-          <Polyline positions={routeCoords} color="blue" />
+          <Polyline
+            positions={routeCoords}
+            pathOptions={{ color: "blue", weight: 4 }}
+          />
         )}
       </MapContainer>
 
