@@ -34,7 +34,10 @@ export default function ImpressioComunicat({ comunicat, mapaRef }) {
        <p><strong>Oficials:</strong> {(comunicat.oficial || []).join(", ")}</p>
        <p><strong>Peons:</strong> {(comunicat.peo || []).join(", ")}</p>
        <p><strong>Incidència:</strong> {comunicat.incidencia}</p>
-       <p><strong>Matrícula:</strong> {comunicat.matricula}</p>
+       <p><strong>Matrícula:</strong>{" "}
+        {Array.isArray(comunicat.matricula)
+          ? comunicat.matricula.join(", ")
+          : comunicat.matricula || ""}</p>
        <p><strong>Ruta:</strong> {comunicat.ruta}</p>
        <p><strong>Eines:</strong> {(comunicat.eines || []).join(", ")}</p>
        <p><strong>Tasques:</strong> {(comunicat.feines || []).join(", ")}</p>

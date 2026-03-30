@@ -1,6 +1,5 @@
 // Database.jsx — amb vista prèvia imprimible, PDF, editar, eliminar,
 // filtres, paginació visual i resum per mesos
-
 import React, { useEffect, useMemo, useState } from "react";
 import {
   collection,

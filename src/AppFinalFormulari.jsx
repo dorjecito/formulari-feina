@@ -1,4 +1,4 @@
-// AppFinalFormulari.jsx — amb funcionalitat d'edició integrada i captura millorada del mapa
+// AppFinalFormulari.jsx — corregit per evitar doble enviament i guardar ruta compatible amb Firestore
 
 import React, { useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
@@ -37,6 +37,26 @@ const emptyFormData = {
   reply_to: "",
 };
 
+const convertirRutaPerFirestore = (coords) => {
+  if (!Array.isArray(coords)) return [];
+  return coords.map((punt) => ({
+    lat: Number(punt[0]),
+    lng: Number(punt[1]),
+  }));
+};
+
+const convertirRutaDesDeFirestore = (coords) => {
+  if (!Array.isArray(coords)) return [];
+  return coords
+    .filter(
+      (punt) =>
+        punt &&
+        typeof punt.lat === "number" &&
+        typeof punt.lng === "number"
+    )
+    .map((punt) => [punt.lat, punt.lng]);
+};
+
 export default function AppFinalFormulari() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -55,6 +75,7 @@ export default function AppFinalFormulari() {
   const [oficialsEmails, setOficialsEmails] = useState({});
   const [oficialsTelefons, setOficialsTelefons] = useState({});
   const [mapReady, setMapReady] = useState(false);
+  const [enviant, setEnviant] = useState(false);
 
   const mapRef = useRef(null);
 
@@ -168,7 +189,10 @@ export default function AppFinalFormulari() {
 
         setFormData(normalitzat);
 
-        if (normalitzat.ruta) {
+        if (Array.isArray(data.rutaCoords) && data.rutaCoords.length > 0) {
+          setRouteCoords(convertirRutaDesDeFirestore(data.rutaCoords));
+          setStatusMsg("Ruta carregada desada ✅");
+        } else if (normalitzat.ruta) {
           fetchRoute(normalitzat.ruta);
         }
 
@@ -250,13 +274,34 @@ export default function AppFinalFormulari() {
     setStatusMsg("Carregant ruta...");
 
     try {
+      const queryPrincipal = destination.includes("Mallorca")
+        ? destination
+        : `${destination}, Mallorca, Spain`;
+
       const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(destination)}&format=json`
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          queryPrincipal
+        )}&format=json&limit=1`
       );
-      const data = await res.json();
+
+      let data = await res.json();
 
       if (!data.length) {
-        throw new Error("Adreça no trobada.");
+        console.warn("Intent 1 fallit, provant fallback...");
+
+        const res2 = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+            destination
+          )}&format=json&limit=1`
+        );
+
+        data = await res2.json();
+      }
+
+      if (!data.length) {
+        setStatusMsg("❌ No s'ha trobat la ruta");
+        setRouteCoords([]);
+        return;
       }
 
       const coords = [parseFloat(data[0].lon), parseFloat(data[0].lat)];
@@ -278,6 +323,16 @@ export default function AppFinalFormulari() {
       }
 
       const geojson = await routeRes.json();
+
+      if (
+        !geojson.features ||
+        !geojson.features.length ||
+        !geojson.features[0].geometry ||
+        !geojson.features[0].geometry.coordinates
+      ) {
+        throw new Error("La ruta rebuda no és vàlida.");
+      }
+
       const polyline = geojson.features[0].geometry.coordinates.map((c) => [
         c[1],
         c[0],
@@ -292,99 +347,132 @@ export default function AppFinalFormulari() {
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+const handleSubmit = async (e) => {
+  e.preventDefault();
+
+  if (enviant) return;
+
+  setEnviant(true);
+  console.log("SUBMIT EXECUTAT");
+
+  try {
+    let imgMapa = "";
 
     try {
-      let imgMapa = "";
-
-      try {
-        if (!mapRef.current || !mapReady) {
-          console.warn("⚠️ El mapa encara no està llest.");
-        } else {
-          if (routeCoords.length > 0) {
-            const bounds = L.latLngBounds(routeCoords);
-            mapRef.current.fitBounds(bounds, { padding: [20, 20] });
-            await new Promise((resolve) => setTimeout(resolve, 1200));
-          }
-
-          mapRef.current.invalidateSize();
-          await new Promise((resolve) => setTimeout(resolve, 600));
-
-          const mapContainer = mapRef.current.getContainer();
-
-          const canvas = await html2canvas(mapContainer, {
-            useCORS: true,
-            allowTaint: true,
-            backgroundColor: "#ffffff",
-            logging: false,
-            scale: 0.5,
-          });
-
-          imgMapa = canvas.toDataURL("image/jpeg", 0.45);
-        }
-      } catch (error) {
-        console.error("❌ Error capturant mapa:", error);
-      }
-
-      console.log("Mapa generat?", !!imgMapa);
-      console.log("Longitud mapa:", imgMapa?.length || 0);
-      console.log("Inici mapa:", imgMapa?.slice(0, 50) || "");
-
-      if (!imgMapa) {
-        alert("❌ No s'ha pogut capturar el mapa. Espera un moment i torna-ho a provar.");
-        return;
-      }
-
-      if (imgMapa.length > 45000) {
-        alert("❌ La imatge del mapa encara és massa gran per EmailJS.");
-        return;
-      }
-
-      const dataFormulari =
-        formData.data || new Date().toISOString().split("T")[0];
-
-      const [any, mes] = dataFormulari.split("-");
-
-      const dadesAmbMapa = {
-        ...formData,
-        data: dataFormulari,
-        any: Number(any),
-        mes: Number(mes),
-        mapa: imgMapa,
-        updatedAt: new Date().toISOString(),
-      };
-
-      if (editId) {
-        const refDoc = doc(db, "comunicatsNova", editId);
-        await updateDoc(refDoc, dadesAmbMapa);
+      if (!mapRef.current || !mapReady) {
+        console.warn("⚠️ El mapa encara no està llest.");
       } else {
-        const refComunicats = collection(db, "comunicatsNova");
-        await addDoc(refComunicats, {
-          ...dadesAmbMapa,
-          createdAt: new Date().toISOString(),
+        if (routeCoords.length > 0) {
+          const bounds = L.latLngBounds(routeCoords);
+          mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
+
+        mapRef.current.invalidateSize();
+        await new Promise((resolve) => setTimeout(resolve, 600));
+
+        const mapContainer = mapRef.current.getContainer();
+
+        const canvas = await html2canvas(mapContainer, {
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+          scale: 0.5,
         });
+
+        imgMapa = canvas.toDataURL("image/jpeg", 0.45);
       }
-
-      await emailjs.send(
-        "service_7axqbdq",
-        "template_t97ykta",
-        { ...dadesAmbMapa },
-        "yDXUC6WUOq8lxjst_"
-      );
-
-      alert(
-        editId
-          ? "✅ Comunicat actualitzat correctament!"
-          : "✅ Formulari enviat i desat correctament!"
-      );
-
-      navigate("/database");
-    } catch (err) {
-      console.error("Error enviant o desant:", err);
-      alert("❌ Hi ha hagut un error en desar o enviar el formulari.");
+    } catch (error) {
+      console.error("❌ Error capturant mapa:", error);
     }
-  };
+
+    console.log("Mapa generat?", !!imgMapa);
+    console.log("Longitud mapa:", imgMapa?.length || 0);
+    console.log("Inici mapa:", imgMapa?.slice(0, 50) || "");
+
+    if (!imgMapa) {
+      alert("❌ No s'ha pogut capturar el mapa. Espera un moment i torna-ho a provar.");
+      return;
+    }
+
+    if (imgMapa.length > 45000) {
+      alert("❌ La imatge del mapa encara és massa gran per EmailJS.");
+      return;
+    }
+
+    const dataFormulari =
+      formData.data || new Date().toISOString().split("T")[0];
+
+    const [any, mes] = dataFormulari.split("-");
+
+    const dadesAmbMapa = {
+      ...formData,
+      data: dataFormulari,
+      any: Number(any),
+      mes: Number(mes),
+      mapa: imgMapa,
+      rutaCoords: convertirRutaPerFirestore(routeCoords),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (editId) {
+      const refDoc = doc(db, "comunicatsNova", editId);
+      await updateDoc(refDoc, dadesAmbMapa);
+    } else {
+      const refComunicats = collection(db, "comunicatsNova");
+      await addDoc(refComunicats, {
+        ...dadesAmbMapa,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    const dadesPerCorreu = {
+      ...dadesAmbMapa,
+      responsableBrigada: Array.isArray(dadesAmbMapa.responsableBrigada)
+        ? dadesAmbMapa.responsableBrigada.join(", ")
+        : dadesAmbMapa.responsableBrigada || "",
+      oficialResponsable: Array.isArray(dadesAmbMapa.oficialResponsable)
+        ? dadesAmbMapa.oficialResponsable.join(", ")
+        : dadesAmbMapa.oficialResponsable || "",
+      oficial: Array.isArray(dadesAmbMapa.oficial)
+        ? dadesAmbMapa.oficial.join(", ")
+        : dadesAmbMapa.oficial || "",
+      peo: Array.isArray(dadesAmbMapa.peo)
+        ? dadesAmbMapa.peo.join(", ")
+        : dadesAmbMapa.peo || "",
+      eines: Array.isArray(dadesAmbMapa.eines)
+        ? dadesAmbMapa.eines.join(", ")
+        : dadesAmbMapa.eines || "",
+      feines: Array.isArray(dadesAmbMapa.feines)
+        ? dadesAmbMapa.feines.join(", ")
+        : dadesAmbMapa.feines || "",
+      matricula: Array.isArray(dadesAmbMapa.matricula)
+        ? dadesAmbMapa.matricula.join(", ")
+        : dadesAmbMapa.matricula || "",
+    };
+
+    await emailjs.send(
+      "service_7axqbdq",
+      "template_t97ykta",
+      dadesPerCorreu,
+      "yDXUC6WUOq8lxjst_"
+    );
+
+    alert(
+      editId
+        ? "✅ Comunicat actualitzat correctament!"
+        : "✅ Formulari enviat i desat correctament!"
+    );
+
+    navigate("/database");
+  } catch (err) {
+    console.error("Error enviant o desant:", err);
+    alert("❌ Hi ha hagut un error en desar o enviar el formulari.");
+  } finally {
+    setEnviant(false);
+  }
+};
 
   const blocOpcions = (label, valors, setFunc, camp, campConfig) => (
     <div className="space-y-2">
@@ -610,15 +698,17 @@ export default function AppFinalFormulari() {
         <div className="flex gap-4">
           <button
             type="submit"
-            className="bg-blue-600 text-white px-4 py-2 rounded"
+            disabled={enviant}
+            className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
           >
-            {editId ? "Guardar canvis" : "Enviar"}
+            {enviant ? "Enviant..." : editId ? "Guardar canvis" : "Enviar"}
           </button>
 
           <button
             type="button"
             onClick={handleReset}
-            className="bg-gray-400 text-white px-4 py-2 rounded"
+            disabled={enviant}
+            className="bg-gray-400 text-white px-4 py-2 rounded disabled:opacity-50"
           >
             Neteja
           </button>
