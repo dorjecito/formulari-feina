@@ -4,16 +4,17 @@ import React, { useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
 import { useParams, useNavigate } from "react-router-dom";
 import "leaflet/dist/leaflet.css";
+import "./App.css";
 import L from "leaflet";
 import emailjs from "emailjs-com";
 import html2canvas from "html2canvas";
 import {
   collection,
-  addDoc,
   doc,
   setDoc,
   getDoc,
   updateDoc,
+  runTransaction,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import ImpressioComunicat from "./ImpressioComunicat";
@@ -26,6 +27,7 @@ const emptyFormData = {
   oficialResponsable: [],
   oficial: [],
   peo: [],
+  referenciaComunicat: "",
   incidencia: "",
   eines: [],
   matricula: [],
@@ -56,6 +58,25 @@ const convertirRutaDesDeFirestore = (coords) => {
     )
     .map((punt) => [punt.lat, punt.lng]);
 };
+
+const obtenirAnyMesReferencia = (dataFormulari) => {
+  const dataBase = dataFormulari || new Date().toISOString().split("T")[0];
+  const [any, mes] = dataBase.split("-");
+  return {
+    dataBase,
+    any,
+    mes,
+    yyyymm: `${any}${mes}`,
+  };
+};
+
+const formatReferencia = (yyyymm, numero) =>
+  `CF-${yyyymm}-${String(numero).padStart(4, "0")}`;
+
+const referenciaVisible = (comunicat) =>
+  comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
+
+const esEmailValid = (email) => /\S+@\S+\.\S+/.test(email);
 
 export default function AppFinalFormulari() {
   const { id } = useParams();
@@ -164,6 +185,7 @@ export default function AppFinalFormulari() {
             : data.peo
             ? [data.peo]
             : [],
+          referenciaComunicat: data.referenciaComunicat || "",
           incidencia: data.incidencia || "",
           eines: Array.isArray(data.eines)
             ? data.eines
@@ -243,7 +265,8 @@ export default function AppFinalFormulari() {
     let extra = {};
 
     if (field === "oficialResponsable") {
-      const primerSeleccionat = Array.isArray(value) ? value[0] || "" : value;
+      const seleccionats = Array.isArray(value) ? value : value ? [value] : [];
+      const primerSeleccionat = seleccionats[0] || "";
       extra = {
         to_email: oficialsEmails[primerSeleccionat] || "",
         telefon: oficialsTelefons[primerSeleccionat] || "",
@@ -259,10 +282,117 @@ export default function AppFinalFormulari() {
     if (field === "ruta") fetchRoute(value);
   };
 
+  const toggleValorCamp = (camp, valor) => {
+    const actuals = Array.isArray(formData[camp])
+      ? formData[camp]
+      : formData[camp]
+      ? [formData[camp]]
+      : [];
+
+    const actualitzat = actuals.includes(valor)
+      ? actuals.filter((item) => item !== valor)
+      : [...actuals, valor];
+
+    handleChange(camp, actualitzat);
+  };
+
+  const obtenirEmailsOficialsResponsables = () => {
+    const seleccionats = Array.isArray(formData.oficialResponsable)
+      ? formData.oficialResponsable
+      : formData.oficialResponsable
+      ? [formData.oficialResponsable]
+      : [];
+
+    const emails = [];
+
+    seleccionats.forEach((nom) => {
+      const email = oficialsEmails[nom];
+
+      if (!email) {
+        console.warn(`Oficial responsable sense email configurat: ${nom}`);
+        return;
+      }
+
+      if (!esEmailValid(email)) {
+        console.warn(`Email no vàlid per a l'oficial responsable ${nom}: ${email}`);
+        return;
+      }
+
+      if (!emails.includes(email)) {
+        emails.push(email);
+      }
+    });
+
+    return emails;
+  };
+
+  const obtenirValorsOficialsResponsables = (mapaValors) => {
+    const seleccionats = Array.isArray(formData.oficialResponsable)
+      ? formData.oficialResponsable
+      : formData.oficialResponsable
+      ? [formData.oficialResponsable]
+      : [];
+
+    return seleccionats.reduce((valors, nom) => {
+      const valor = mapaValors[nom];
+
+      if (valor && !valors.includes(valor)) {
+        valors.push(valor);
+      }
+
+      return valors;
+    }, []);
+  };
+
+  const emailsDestinatarisVisibles = obtenirValorsOficialsResponsables(oficialsEmails);
+  const telefonsDestinatarisVisibles = obtenirValorsOficialsResponsables(oficialsTelefons);
+  const valorEmailsVisible =
+    emailsDestinatarisVisibles.length > 0
+      ? emailsDestinatarisVisibles.join(", ")
+      : formData.to_email;
+  const valorTelefonsVisible =
+    telefonsDestinatarisVisibles.length > 0
+      ? telefonsDestinatarisVisibles.join(", ")
+      : formData.telefon;
+
   const handleReset = () => {
     setFormData(emptyFormData);
     setRouteCoords([]);
     setStatusMsg("Formulari reiniciat ✨");
+  };
+
+  const crearComunicatAmbReferencia = async (dadesAmbMapa, any, mes, yyyymm) => {
+    return runTransaction(db, async (transaction) => {
+      const counterRef = doc(db, "comptadorsComunicats", yyyymm);
+      const nouComunicatRef = doc(collection(db, "comunicatsNova"));
+      const counterSnap = await transaction.get(counterRef);
+
+      const ultimNumero = counterSnap.exists()
+        ? Number(counterSnap.data().ultimNumero || 0)
+        : 0;
+      const nouNumero = ultimNumero + 1;
+      const referenciaComunicat = formatReferencia(yyyymm, nouNumero);
+      const ara = new Date().toISOString();
+
+      transaction.set(
+        counterRef,
+        {
+          any: Number(any),
+          mes: Number(mes),
+          ultimNumero: nouNumero,
+          updatedAt: ara,
+        },
+        { merge: true }
+      );
+
+      transaction.set(nouComunicatRef, {
+        ...dadesAmbMapa,
+        referenciaComunicat,
+        createdAt: ara,
+      });
+
+      return { id: nouComunicatRef.id, referenciaComunicat };
+    });
   };
 
   const fetchRoute = async (destination) => {
@@ -401,10 +531,12 @@ const handleSubmit = async (e) => {
       return;
     }
 
-    const dataFormulari =
-      formData.data || new Date().toISOString().split("T")[0];
-
-    const [any, mes] = dataFormulari.split("-");
+    const {
+      dataBase: dataFormulari,
+      any,
+      mes,
+      yyyymm,
+    } = obtenirAnyMesReferencia(formData.data);
 
     const dadesAmbMapa = {
       ...formData,
@@ -418,17 +550,29 @@ const handleSubmit = async (e) => {
 
     if (editId) {
       const refDoc = doc(db, "comunicatsNova", editId);
-      await updateDoc(refDoc, dadesAmbMapa);
+      const dadesPerActualitzar = { ...dadesAmbMapa };
+
+      if (!dadesPerActualitzar.referenciaComunicat) {
+        delete dadesPerActualitzar.referenciaComunicat;
+      }
+
+      await updateDoc(refDoc, dadesPerActualitzar);
     } else {
-      const refComunicats = collection(db, "comunicatsNova");
-      await addDoc(refComunicats, {
-        ...dadesAmbMapa,
-        createdAt: new Date().toISOString(),
-      });
+      const resultat = await crearComunicatAmbReferencia(
+        dadesAmbMapa,
+        any,
+        mes,
+        yyyymm
+      );
+      dadesAmbMapa.referenciaComunicat = resultat.referenciaComunicat;
     }
+
+    const referenciaPerCorreu = referenciaVisible(dadesAmbMapa);
 
     const dadesPerCorreu = {
       ...dadesAmbMapa,
+      referenciaComunicat: referenciaPerCorreu,
+      incidencia: referenciaPerCorreu,
       responsableBrigada: Array.isArray(dadesAmbMapa.responsableBrigada)
         ? dadesAmbMapa.responsableBrigada.join(", ")
         : dadesAmbMapa.responsableBrigada || "",
@@ -452,12 +596,26 @@ const handleSubmit = async (e) => {
         : dadesAmbMapa.matricula || "",
     };
 
-    await emailjs.send(
-      "service_7axqbdq",
-      "template_t97ykta",
-      dadesPerCorreu,
-      "yDXUC6WUOq8lxjst_"
-    );
+    const emailsResponsables = obtenirEmailsOficialsResponsables();
+    const destinataris = emailsResponsables.length > 0
+      ? emailsResponsables
+      : dadesPerCorreu.to_email && esEmailValid(dadesPerCorreu.to_email)
+      ? [dadesPerCorreu.to_email]
+      : [];
+
+    if (destinataris.length === 0) {
+      console.warn("No s'ha trobat cap email vàlid per enviar el comunicat.");
+      throw new Error("No hi ha cap destinatari vàlid per enviar el comunicat.");
+    }
+
+    for (const email of destinataris) {
+      await emailjs.send(
+        "service_7axqbdq",
+        "template_t97ykta",
+        { ...dadesPerCorreu, to_email: email },
+        "yDXUC6WUOq8lxjst_"
+      );
+    }
 
     alert(
       editId
@@ -475,14 +633,14 @@ const handleSubmit = async (e) => {
 };
 
   const blocOpcions = (label, valors, setFunc, camp, campConfig) => (
-    <div className="space-y-2">
-      <label className="font-semibold">{label}</label>
+    <div className="config-section">
+      <label className="section-title">{label}</label>
 
-      <div className="flex gap-2">
+      <div className="config-row">
         <input
           id={`nou-${camp}`}
           placeholder={`Nou ${camp}`}
-          className="border p-1 rounded w-full"
+          className="form-input"
         />
 
         <button
@@ -495,7 +653,7 @@ const handleSubmit = async (e) => {
               input.value = "";
             }
           }}
-          className="bg-green-500 text-white px-2 py-1 rounded"
+          className="button-success"
         >
           Afegir
         </button>
@@ -510,57 +668,71 @@ const handleSubmit = async (e) => {
               input.value = "";
             }
           }}
-          className="bg-red-500 text-white px-2 py-1 rounded"
+          className="button-danger"
         >
           Eliminar
         </button>
       </div>
 
-      <select
-        multiple
-        value={formData[camp]}
-        onChange={(e) =>
-          handleChange(
-            camp,
-            Array.from(e.target.selectedOptions).map((o) => o.value)
-          )
-        }
-        className="border p-2 rounded w-full"
-      >
-        {valors.map((v, i) => (
-          <option key={i} value={v}>
-            {v}
-          </option>
-        ))}
-      </select>
+      <div className="selection-list">
+        {valors.length === 0 ? (
+          <p className="empty-options">No hi ha opcions configurades.</p>
+        ) : (
+          valors.map((v, i) => {
+            const seleccionats = Array.isArray(formData[camp])
+              ? formData[camp]
+              : formData[camp]
+              ? [formData[camp]]
+              : [];
+            const seleccionat = seleccionats.includes(v);
+
+            return (
+              <label
+                key={`${v}-${i}`}
+                className={`selection-option${seleccionat ? " selected" : ""}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={seleccionat}
+                  onChange={() => toggleValorCamp(camp, v)}
+                />
+                <span>{v}</span>
+              </label>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 
   return (
-    <div className="flex flex-col items-center justify-center text-center mb-6">
-      <div className="w-24 h-24 flex items-center justify-center mb-2">
+    <div className="app-container">
+      <div className="form-header">
+        <div className="logo-frame">
         <img
           src="/ajuntament.png"
           alt="Logo"
-          className="max-h-full max-w-full object-contain"
+          className="app-logo"
         />
-      </div>
+        </div>
 
-      <h1 className="text-2xl font-bold">
+      <h1>
         {editId
           ? "Editar comunicat de feina · Brigada de jardineria"
           : "Comunicat de feina · Brigada de jardineria"}
       </h1>
+      </div>
 
-      <hr className="w-full border-t border-gray-300 mt-4" />
-
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="form-card">
+        <div className="input-group">
+          <label className="field-label">Data</label>
         <input
           type="date"
           value={formData.data}
           onChange={(e) => handleChange("data", e.target.value)}
-          className="border p-2 rounded w-full"
+            className="form-input"
         />
+        </div>
 
         {blocOpcions(
           "Responsables Brigada",
@@ -578,23 +750,23 @@ const handleSubmit = async (e) => {
           "oficialsResponsables"
         )}
 
-        <div className="space-y-2 border-t pt-4 mt-4">
-          <label className="font-semibold">Afegir nou oficial responsable</label>
+        <div className="config-section">
+          <label className="section-title">Afegir nou oficial responsable</label>
 
           <input
             id="nouOficialResponsable"
             placeholder="Nom oficial"
-            className="border p-1 rounded w-full"
+            className="form-input"
           />
           <input
             id="nouEmailResponsable"
             placeholder="Email oficial"
-            className="border p-1 rounded w-full"
+            className="form-input"
           />
           <input
             id="nouTelefonResponsable"
             placeholder="Telèfon oficial"
-            className="border p-1 rounded w-full"
+            className="form-input"
           />
 
           <button
@@ -638,7 +810,7 @@ const handleSubmit = async (e) => {
                 alert("❗ Cal posar com a mínim Nom i Email");
               }
             }}
-            className="bg-green-500 text-white px-4 py-2 rounded mt-2"
+            className="button-success button-full"
           >
             Afegir nou responsable
           </button>
@@ -656,50 +828,72 @@ const handleSubmit = async (e) => {
         )}
         {blocOpcions("Tasques", tasques, setTasques, "feines", "tasques")}
 
-        <input
-          type="text"
-          value={formData.incidencia}
-          onChange={(e) => handleChange("incidencia", e.target.value)}
-          placeholder="Número d'incidència"
-          className="border p-2 rounded w-full"
-        />
+        <div className="input-group">
+          <label className="field-label">Referència del comunicat</label>
+          <input
+            type="text"
+            value={editId ? referenciaVisible(formData) : "Es generarà automàticament en desar"}
+            readOnly
+            className="form-input readonly-input"
+          />
+        </div>
 
+        <div className="input-group">
+          <label className="field-label">Ruta a seguir</label>
         <input
           type="text"
           value={formData.ruta}
           onChange={(e) => handleChange("ruta", e.target.value)}
           placeholder="Ruta a seguir"
-          className="border p-2 rounded w-full"
+            className="form-input"
         />
+        </div>
 
+        <div className="input-group">
+          <label className="field-label">Observacions</label>
         <textarea
           value={formData.observacions}
           onChange={(e) => handleChange("observacions", e.target.value)}
           placeholder="Observacions"
-          className="border p-2 rounded w-full"
+            className="form-textarea"
         />
+        </div>
 
-        <input
-          type="email"
-          value={formData.to_email}
-          onChange={(e) => handleChange("to_email", e.target.value)}
-          placeholder="Email destinatari"
-          className="border p-2 rounded w-full"
-        />
-
+        <div className="input-group">
+          <label className="field-label">
+            {emailsDestinatarisVisibles.length > 1
+              ? "Emails destinataris"
+              : "Email destinatari"}
+          </label>
         <input
           type="text"
-          value={formData.telefon}
+          value={valorEmailsVisible}
+          onChange={(e) => handleChange("to_email", e.target.value)}
+          placeholder="Email destinatari"
+            className="form-input"
+        />
+        </div>
+
+        <div className="input-group">
+          <label className="field-label">
+            {telefonsDestinatarisVisibles.length > 1
+              ? "Telèfons destinataris"
+              : "Telèfon destinatari"}
+          </label>
+        <input
+          type="text"
+          value={valorTelefonsVisible}
           onChange={(e) => handleChange("telefon", e.target.value)}
           placeholder="Telèfon destinatari"
-          className="border p-2 rounded w-full"
+            className="form-input"
         />
+        </div>
 
-        <div className="flex gap-4">
+        <div className="form-actions">
           <button
             type="submit"
             disabled={enviant}
-            className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+            className="button-primary"
           >
             {enviant ? "Enviant..." : editId ? "Guardar canvis" : "Enviar"}
           </button>
@@ -708,20 +902,21 @@ const handleSubmit = async (e) => {
             type="button"
             onClick={handleReset}
             disabled={enviant}
-            className="bg-gray-400 text-white px-4 py-2 rounded disabled:opacity-50"
+            className="button-secondary"
           >
             Neteja
           </button>
         </div>
 
-        {statusMsg && <p className="text-sm text-gray-600 italic">{statusMsg}</p>}
+        {statusMsg && <p className="status-message">{statusMsg}</p>}
       </form>
 
+      <div className="map-card">
       <MapContainer
         center={center}
         zoom={13}
         preferCanvas={true}
-        style={{ height: "300px", width: "100%", marginTop: "20px" }}
+        style={{ height: "300px", width: "100%" }}
         whenReady={(event) => {
           mapRef.current = event.target;
           setMapReady(true);
@@ -744,6 +939,7 @@ const handleSubmit = async (e) => {
           />
         )}
       </MapContainer>
+      </div>
 
       <ImpressioComunicat comunicat={formData} mapaRef={mapRef} />
     </div>
