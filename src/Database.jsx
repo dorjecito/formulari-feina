@@ -160,6 +160,73 @@ export default function Database() {
     return value || "";
   };
 
+  const formatDataLocalISO = (date) => {
+    const any = date.getFullYear();
+    const mes = String(date.getMonth() + 1).padStart(2, "0");
+    const dia = String(date.getDate()).padStart(2, "0");
+
+    return `${any}-${mes}-${dia}`;
+  };
+
+  const normalitzarDataISO = (any, mes, dia) => {
+    const data = new Date(Number(any), Number(mes) - 1, Number(dia));
+
+    if (
+      data.getFullYear() !== Number(any) ||
+      data.getMonth() !== Number(mes) - 1 ||
+      data.getDate() !== Number(dia)
+    ) {
+      return "";
+    }
+
+    return formatDataLocalISO(data);
+  };
+
+  const extreureDataISO = (value) => {
+    if (!value) return "";
+
+    const text = String(value).trim().replace(/[‐‑‒–—−]/g, "-");
+    const coincidenciaISO = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+
+    if (coincidenciaISO) {
+      return normalitzarDataISO(
+        coincidenciaISO[1],
+        coincidenciaISO[2],
+        coincidenciaISO[3]
+      );
+    }
+
+    const coincidenciaLocal = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
+
+    if (coincidenciaLocal) {
+      return normalitzarDataISO(
+        coincidenciaLocal[3],
+        coincidenciaLocal[2],
+        coincidenciaLocal[1]
+      );
+    }
+
+    return "";
+  };
+
+  const dataComunicatISO = (value) => {
+    if (!value) return "";
+
+    if (typeof value === "string") {
+      return extreureDataISO(value);
+    }
+
+    if (value?.toDate) {
+      return formatDataLocalISO(value.toDate());
+    }
+
+    if (value instanceof Date) {
+      return formatDataLocalISO(value);
+    }
+
+    return "";
+  };
+
   const referenciaVisible = (comunicat) =>
     comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
 
@@ -198,19 +265,29 @@ export default function Database() {
     docu.save(`comunicat_${comunicat.data || "sense_data"}.pdf`);
   };
 
+  const searchQueryNeta = searchQuery.trim();
+  const dataCercaISO = extreureDataISO(searchQueryNeta);
+  const cercaPerDataActiva = Boolean(dataCercaISO);
+
   const comunicatsFiltrats = useMemo(() => {
-    return comunicats.filter((c) =>
+    const baseComunicats = cercaPerDataActiva ? totsElsComunicats : comunicats;
+
+    if (cercaPerDataActiva) {
+      return baseComunicats.filter((c) => dataComunicatISO(c.data) === dataCercaISO);
+    }
+
+    return baseComunicats.filter((c) =>
       Object.values(c).some((val) => {
         if (!val) return false;
 
         if (Array.isArray(val)) {
-          return val.join(", ").toLowerCase().includes(searchQuery.toLowerCase());
+          return val.join(", ").toLowerCase().includes(searchQueryNeta.toLowerCase());
         }
 
-        return val.toString().toLowerCase().includes(searchQuery.toLowerCase());
+        return val.toString().toLowerCase().includes(searchQueryNeta.toLowerCase());
       })
     );
-  }, [comunicats, searchQuery]);
+  }, [comunicats, totsElsComunicats, searchQueryNeta, dataCercaISO, cercaPerDataActiva]);
 
   const resumPerMesos = useMemo(() => {
     const mapa = new Map();
@@ -287,6 +364,39 @@ export default function Database() {
           fontSize: "1rem",
         }}
       />
+
+      {cercaPerDataActiva && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: "10px",
+            flexWrap: "wrap",
+            margin: "0 auto 20px",
+            color: "#2D3748",
+          }}
+        >
+          <span>
+            Filtrant per data: <strong>{dataCercaISO}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={() => setSearchQuery("")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: "8px",
+              border: "1px solid #CBD5E0",
+              backgroundColor: "#fff",
+              color: "#2D3748",
+              cursor: "pointer",
+              fontWeight: "bold",
+            }}
+          >
+            Netejar cerca
+          </button>
+        </div>
+      )}
 
       <div
         style={{
