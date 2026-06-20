@@ -1,6 +1,6 @@
 // Database.jsx — amb vista prèvia imprimible, PDF, editar, eliminar,
 // filtres, paginació visual i resum per mesos
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   getDocs,
@@ -28,6 +28,7 @@ export default function Database() {
   const [paginaActual, setPaginaActual] = useState(1);
 
   const navigate = useNavigate();
+  const previewRef = useRef(null);
   const ITEMS_PER_PAGE = 10;
 
   const mesos = [
@@ -159,12 +160,27 @@ export default function Database() {
     return value || "";
   };
 
+  const referenciaVisible = (comunicat) =>
+    comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
+
+  const mostrarVistaPrevia = (comunicat) => {
+    setComunicatSeleccionat(comunicat);
+
+    setTimeout(() => {
+      previewRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 100);
+  };
+
   const descarregarPDF = (comunicat) => {
     const docu = new jsPDF();
     docu.setFontSize(14);
     docu.text("Vista de comunicat", 14, 20);
 
     const linies = [
+      `Referència: ${referenciaVisible(comunicat)}`,
       `Data: ${formatValue(comunicat.data)}`,
       `Responsable Brigada: ${formatValue(comunicat.responsableBrigada)}`,
       `Oficial Responsable: ${formatValue(comunicat.oficialResponsable)}`,
@@ -466,6 +482,7 @@ export default function Database() {
             <tr>
               {[
                 "Data",
+                "Referència",
                 "Responsable Brigada",
                 "Oficial Responsable",
                 "Oficials",
@@ -489,6 +506,7 @@ export default function Database() {
             {comunicatsPagina.map((c, i) => (
               <tr key={c.id} style={{ backgroundColor: i % 2 === 0 ? "#f9f9f9" : "#fff" }}>
                 <td style={celda}>{formatValue(c.data)}</td>
+                <td style={celda}>{referenciaVisible(c)}</td>
                 <td style={celda}>{formatValue(c.responsableBrigada)}</td>
                 <td style={celda}>{formatValue(c.oficialResponsable)}</td>
                 <td style={celda}>{formatValue(c.oficial)}</td>
@@ -502,7 +520,7 @@ export default function Database() {
 
                 <td style={{ ...celda, textAlign: "center", minWidth: "110px" }}>
                   <button
-                    onClick={() => setComunicatSeleccionat(c)}
+                    onClick={() => mostrarVistaPrevia(c)}
                     style={{
                       backgroundColor: "#3182CE",
                       color: "white",
@@ -613,6 +631,7 @@ export default function Database() {
 
       {comunicatSeleccionat && (
         <div
+          ref={previewRef}
           style={{
             backgroundColor: "#fff",
             border: "1px solid #ccc",
@@ -623,11 +642,16 @@ export default function Database() {
             maxWidth: "600px",
           }}
         >
+          <h2 style={{ textAlign: "center", marginBottom: "10px" }}>
+            Vista prèvia del comunicat seleccionat
+          </h2>
+
           <h3 style={{ textAlign: "center", marginBottom: "20px" }}>
             Vista prèvia de comunicat
           </h3>
 
           <p><strong>Data:</strong> {formatValue(comunicatSeleccionat.data)}</p>
+          <p><strong>Referència:</strong> {referenciaVisible(comunicatSeleccionat)}</p>
           <p><strong>Responsable Brigada:</strong> {formatValue(comunicatSeleccionat.responsableBrigada)}</p>
           <p><strong>Oficial Responsable:</strong> {formatValue(comunicatSeleccionat.oficialResponsable)}</p>
           <p><strong>Oficials:</strong> {formatValue(comunicatSeleccionat.oficial)}</p>

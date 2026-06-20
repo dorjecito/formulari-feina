@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { signOut } from "firebase/auth";
 import { auth } from "./firebase";
 import AppFinalFormulari from "./AppFinalFormulari";
@@ -12,21 +12,28 @@ function Home() {
   };
 
   return (
-    <div style={{ textAlign: "center", marginTop: "30px" }}>
-      <AppFinalFormulari />
-      <div style={{ marginTop: "20px" }}>
-        <Link to="/database">
-          <button style={{ marginRight: "10px", padding: "10px 20px" }}>
-            Veure Comunicats
-          </button>
-        </Link>
-        <button
-          onClick={handleLogout}
-          style={{ padding: "10px 20px" }}
-        >
-          Tancar Sessió
-        </button>
-      </div>
+    <div>
+      <AppFinalFormulari
+        topActions={
+          <>
+            <button
+              type="button"
+              onClick={() => navigate("/database")}
+              className="button-primary"
+            >
+              📂 Veure comunicats
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="button-secondary"
+            >
+              🚪 Tancar sessió
+            </button>
+          </>
+        }
+      />
     </div>
   );
 }

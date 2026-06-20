@@ -1,14 +1,20 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 
-export default function ImpressioComunicat({ comunicat, mapaRef }) {
+export default function ImpressioComunicat({ comunicat, mapaRef, onPrintReady }) {
 
  const printRef = useRef();
  const [mapaImg, setMapaImg] = useState("");
+ const referenciaVisible =
+   comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
 
  const handlePrint = async () => {
    if (mapaRef && mapaRef.current) {
-     const mapCanvas = await html2canvas(mapaRef.current);
+     const mapElement =
+       typeof mapaRef.current.getContainer === "function"
+         ? mapaRef.current.getContainer()
+         : mapaRef.current;
+     const mapCanvas = await html2canvas(mapElement);
      const imgData = mapCanvas.toDataURL('image/png');
      setMapaImg(imgData);
    }
@@ -18,8 +24,14 @@ export default function ImpressioComunicat({ comunicat, mapaRef }) {
    }, 500);
  };
 
+ useEffect(() => {
+   if (onPrintReady) {
+     onPrintReady(handlePrint);
+   }
+ }, [onPrintReady, handlePrint]);
+
  return (
-   <div>
+   <div className="print-wrapper">
      <div className="comunicat-impressio" ref={printRef} style={{ padding: '20px', fontFamily: 'sans-serif' }}>
        <div style={{ textAlign: 'center' }}>
          <img src="/ajuntament.png" alt="Logo Ajuntament" style={{ height: '60px', marginBottom: '10px' }} />
@@ -29,6 +41,7 @@ export default function ImpressioComunicat({ comunicat, mapaRef }) {
 
        <p><strong>Email:</strong> {comunicat.email}</p>
        <p><strong>Data:</strong> {comunicat.data}</p>
+       <p><strong>Referència:</strong> {referenciaVisible}</p>
        <p><strong>Responsable brigada:</strong> {comunicat.responsableBrigada}</p>
        <p><strong>Oficial responsable:</strong> {comunicat.oficialResponsable}</p>
        <p><strong>Oficials:</strong> {(comunicat.oficial || []).join(", ")}</p>
@@ -79,9 +92,6 @@ export default function ImpressioComunicat({ comunicat, mapaRef }) {
        </div>
      </div>
 
-     <button onClick={handlePrint} style={{ marginTop: '20px' }}>
-       🖨️ Previsualitzar i Imprimir
-     </button>
    </div>
  );
 }

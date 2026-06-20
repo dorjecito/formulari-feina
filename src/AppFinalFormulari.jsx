@@ -15,6 +15,7 @@ import {
   getDoc,
   updateDoc,
   runTransaction,
+  serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import ImpressioComunicat from "./ImpressioComunicat";
@@ -78,7 +79,7 @@ const referenciaVisible = (comunicat) =>
 
 const esEmailValid = (email) => /\S+@\S+\.\S+/.test(email);
 
-export default function AppFinalFormulari() {
+export default function AppFinalFormulari({ topActions = null }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const editId = id || null;
@@ -99,6 +100,7 @@ export default function AppFinalFormulari() {
   const [enviant, setEnviant] = useState(false);
 
   const mapRef = useRef(null);
+  const impressioRef = useRef(null);
 
   const carregarConfiguracio = async () => {
     try {
@@ -372,7 +374,6 @@ export default function AppFinalFormulari() {
         : 0;
       const nouNumero = ultimNumero + 1;
       const referenciaComunicat = formatReferencia(yyyymm, nouNumero);
-      const ara = new Date().toISOString();
 
       transaction.set(
         counterRef,
@@ -380,7 +381,7 @@ export default function AppFinalFormulari() {
           any: Number(any),
           mes: Number(mes),
           ultimNumero: nouNumero,
-          updatedAt: ara,
+          updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
@@ -388,11 +389,34 @@ export default function AppFinalFormulari() {
       transaction.set(nouComunicatRef, {
         ...dadesAmbMapa,
         referenciaComunicat,
-        createdAt: ara,
+        createdAt: serverTimestamp(),
       });
 
       return { id: nouComunicatRef.id, referenciaComunicat };
     });
+  };
+
+  const enviarCorreuComunicat = async (dadesPerCorreu) => {
+    const emailsResponsables = obtenirEmailsOficialsResponsables();
+    const destinataris = emailsResponsables.length > 0
+      ? emailsResponsables
+      : dadesPerCorreu.to_email && esEmailValid(dadesPerCorreu.to_email)
+      ? [dadesPerCorreu.to_email]
+      : [];
+
+    if (destinataris.length === 0) {
+      console.warn("No s'ha trobat cap email vàlid per enviar el comunicat.");
+      throw new Error("No hi ha cap destinatari vàlid per enviar el comunicat.");
+    }
+
+    for (const email of destinataris) {
+      await emailjs.send(
+        "service_7axqbdq",
+        "template_t97ykta",
+        { ...dadesPerCorreu, to_email: email },
+        "yDXUC6WUOq8lxjst_"
+      );
+    }
   };
 
   const fetchRoute = async (destination) => {
@@ -482,6 +506,9 @@ const handleSubmit = async (e) => {
 
   if (enviant) return;
 
+  const haDeReenviar =
+    !editId || e.nativeEvent?.submitter?.value === "reenviar";
+
   setEnviant(true);
   console.log("SUBMIT EXECUTAT");
 
@@ -545,7 +572,7 @@ const handleSubmit = async (e) => {
       mes: Number(mes),
       mapa: imgMapa,
       rutaCoords: convertirRutaPerFirestore(routeCoords),
-      updatedAt: new Date().toISOString(),
+      updatedAt: serverTimestamp(),
     };
 
     if (editId) {
@@ -571,6 +598,7 @@ const handleSubmit = async (e) => {
 
     const dadesPerCorreu = {
       ...dadesAmbMapa,
+      updatedAt: new Date().toISOString(),
       referenciaComunicat: referenciaPerCorreu,
       incidencia: referenciaPerCorreu,
       responsableBrigada: Array.isArray(dadesAmbMapa.responsableBrigada)
@@ -596,29 +624,12 @@ const handleSubmit = async (e) => {
         : dadesAmbMapa.matricula || "",
     };
 
-    const emailsResponsables = obtenirEmailsOficialsResponsables();
-    const destinataris = emailsResponsables.length > 0
-      ? emailsResponsables
-      : dadesPerCorreu.to_email && esEmailValid(dadesPerCorreu.to_email)
-      ? [dadesPerCorreu.to_email]
-      : [];
-
-    if (destinataris.length === 0) {
-      console.warn("No s'ha trobat cap email vàlid per enviar el comunicat.");
-      throw new Error("No hi ha cap destinatari vàlid per enviar el comunicat.");
-    }
-
-    for (const email of destinataris) {
-      await emailjs.send(
-        "service_7axqbdq",
-        "template_t97ykta",
-        { ...dadesPerCorreu, to_email: email },
-        "yDXUC6WUOq8lxjst_"
-      );
+    if (haDeReenviar) {
+      await enviarCorreuComunicat(dadesPerCorreu);
     }
 
     alert(
-      editId
+      editId && !haDeReenviar
         ? "✅ Comunicat actualitzat correctament!"
         : "✅ Formulari enviat i desat correctament!"
     );
@@ -721,6 +732,7 @@ const handleSubmit = async (e) => {
           ? "Editar comunicat de feina · Brigada de jardineria"
           : "Comunicat de feina · Brigada de jardineria"}
       </h1>
+      {topActions && <div className="top-nav-actions">{topActions}</div>}
       </div>
 
       <form onSubmit={handleSubmit} className="form-card">
@@ -892,19 +904,52 @@ const handleSubmit = async (e) => {
         <div className="form-actions">
           <button
             type="submit"
+            value="desar"
             disabled={enviant}
             className="button-primary"
           >
-            {enviant ? "Enviant..." : editId ? "Guardar canvis" : "Enviar"}
+            {enviant ? "Desant..." : editId ? "Desar canvis" : "Enviar"}
           </button>
+
+          {editId && (
+            <button
+              type="submit"
+              value="reenviar"
+              disabled={enviant}
+              className="button-secondary"
+            >
+              {enviant ? "Desant..." : "Desar i reenviar"}
+            </button>
+          )}
+
+          {editId && (
+            <button
+              type="button"
+              onClick={() => navigate("/database")}
+              disabled={enviant}
+              className="button-secondary"
+            >
+              Cancel·lar
+            </button>
+          )}
+
+          {!editId && (
+            <button
+              type="button"
+              onClick={handleReset}
+              disabled={enviant}
+              className="button-secondary"
+            >
+              Neteja
+            </button>
+          )}
 
           <button
             type="button"
-            onClick={handleReset}
-            disabled={enviant}
+            onClick={() => impressioRef.current?.()}
             className="button-secondary"
           >
-            Neteja
+            🖨️ Previsualitzar i imprimir
           </button>
         </div>
 
@@ -941,7 +986,13 @@ const handleSubmit = async (e) => {
       </MapContainer>
       </div>
 
-      <ImpressioComunicat comunicat={formData} mapaRef={mapRef} />
+      <ImpressioComunicat
+        comunicat={formData}
+        mapaRef={mapRef}
+        onPrintReady={(handlePrint) => {
+          impressioRef.current = handlePrint;
+        }}
+      />
     </div>
   );
 }

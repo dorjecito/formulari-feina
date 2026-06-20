@@ -14,8 +14,47 @@ select, input, textarea, button {
   font-size: 1rem;
 }
 @media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
   body * {
     visibility: hidden;
+  }
+
+  .app-container {
+    min-height: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .app-container > :not(.print-wrapper) {
+    display: none !important;
+  }
+
+  .print-wrapper {
+    display: block !important;
+    visibility: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .print-wrapper * {
+    visibility: visible;
   }
 
   .comunicat-impressio, .comunicat-impressio * {
@@ -23,10 +62,15 @@ select, input, textarea, button {
   }
 
   .comunicat-impressio {
-    position: absolute;
-    top: 0;
-    left: 0;
+    position: static !important;
     width: 100%;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+    break-after: auto;
+    break-before: auto;
+    page-break-after: auto;
+    page-break-before: auto;
   }
 
   button, .no-print {

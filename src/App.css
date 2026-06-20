@@ -40,6 +40,14 @@
   color: #1f2933;
 }
 
+.top-nav-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .form-card {
   width: 100%;
   max-width: 850px;
@@ -294,6 +302,10 @@
   .button-danger {
     width: 100%;
     min-height: 50px;
+  }
+
+  .top-nav-actions {
+    flex-direction: column;
   }
 
   .form-actions {
