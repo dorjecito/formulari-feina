@@ -57,33 +57,62 @@ export default function Database() {
     setPaginaActual(1);
   }, [searchQuery, filtreAny, filtreMes]);
 
+  const valorsFiltreAny = (valor) => {
+    if (!valor) return [];
+    return [...new Set([Number(valor), String(valor)])];
+  };
+
+  const valorsFiltreMes = (valor) => {
+    if (!valor) return [];
+    return [...new Set([Number(valor), String(valor), String(valor).padStart(2, "0")])];
+  };
+
+  const carregarConsultesCompatibles = async (consultes) => {
+    const resultats = await Promise.all(consultes.map((consulta) => getDocs(consulta)));
+    const comunicatsPerId = new Map();
+
+    resultats.forEach((querySnapshot) => {
+      querySnapshot.docs.forEach((docSnap) => {
+        comunicatsPerId.set(docSnap.id, {
+          id: docSnap.id,
+          ...docSnap.data(),
+        });
+      });
+    });
+
+    return Array.from(comunicatsPerId.values());
+  };
+
   const fetchComunicats = async () => {
     setLoading(true);
 
     try {
       const ref = collection(db, "comunicatsNova");
-      let q = ref;
+      let consultes = [ref];
 
       if (filtreAny && filtreMes) {
-        q = query(
-          ref,
-          where("any", "==", Number(filtreAny)),
-          where("mes", "==", Number(filtreMes))
+        consultes = valorsFiltreAny(filtreAny).flatMap((valorAny) =>
+          valorsFiltreMes(filtreMes).map((valorMes) =>
+            query(
+              ref,
+              where("any", "==", valorAny),
+              where("mes", "==", valorMes)
+            )
+          )
         );
       } else if (filtreAny) {
-        q = query(ref, where("any", "==", Number(filtreAny)));
+        consultes = valorsFiltreAny(filtreAny).map((valorAny) =>
+          query(ref, where("any", "==", valorAny))
+        );
       } else if (filtreMes) {
-        q = query(ref, where("mes", "==", Number(filtreMes)));
+        consultes = valorsFiltreMes(filtreMes).map((valorMes) =>
+          query(ref, where("mes", "==", valorMes))
+        );
       }
 
-      const querySnapshot = await getDocs(q);
-
-      const dades = querySnapshot.docs
-        .map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        }))
-        .sort((a, b) => (b.data || "").localeCompare(a.data || ""));
+      const dades = (await carregarConsultesCompatibles(consultes)).sort((a, b) =>
+        (b.data || "").localeCompare(a.data || "")
+      );
 
       setComunicats(dades);
     } catch (error) {
@@ -171,14 +200,17 @@ export default function Database() {
     const mapa = new Map();
 
     totsElsComunicats.forEach((c) => {
-      if (!c.any || !c.mes) return;
+      const any = Number(c.any);
+      const mes = Number(c.mes);
 
-      const clau = `${c.any}-${String(c.mes).padStart(2, "0")}`;
+      if (!any || !mes) return;
+
+      const clau = `${any}-${String(mes).padStart(2, "0")}`;
 
       if (!mapa.has(clau)) {
         mapa.set(clau, {
-          any: Number(c.any),
-          mes: Number(c.mes),
+          any,
+          mes,
           total: 0,
         });
       }
@@ -197,7 +229,9 @@ export default function Database() {
   const fi = inici + ITEMS_PER_PAGE;
   const comunicatsPagina = comunicatsFiltrats.slice(inici, fi);
 
-  const anysDisponibles = [...new Set(totsElsComunicats.map((c) => c.any).filter(Boolean))].sort((a, b) => b - a);
+  const anysDisponibles = [
+    ...new Set(totsElsComunicats.map((c) => Number(c.any)).filter(Boolean)),
+  ].sort((a, b) => b - a);
 
   const celda = {
     border: "1px solid #ddd",
