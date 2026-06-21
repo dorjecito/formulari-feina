@@ -347,6 +347,24 @@ export default function Database() {
         🗂️ Base de Dades de Comunicats
       </h2>
 
+      <div style={{ textAlign: "center", marginBottom: "20px" }}>
+        <Link to="/home">
+          <button
+            style={{
+              padding: "10px 20px",
+              backgroundColor: "#4A5568",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontWeight: "bold",
+            }}
+          >
+            ⬅️ Tornar al Formulari
+          </button>
+        </Link>
+      </div>
+
       <input
         type="text"
         placeholder="🔎 Escriu per cercar comunicats..."
@@ -821,23 +839,6 @@ export default function Database() {
         </div>
       )}
 
-      <div style={{ textAlign: "center", marginTop: "30px" }}>
-        <Link to="/home">
-          <button
-            style={{
-              padding: "10px 20px",
-              backgroundColor: "#4A5568",
-              color: "#fff",
-              border: "none",
-              borderRadius: "6px",
-              cursor: "pointer",
-              fontWeight: "bold",
-            }}
-          >
-            ⬅️ Tornar al Formulari
-          </button>
-        </Link>
-      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 // AppFinalFormulari.jsx — corregit per evitar doble enviament i guardar ruta compatible amb Firestore
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
 import { useParams, useNavigate } from "react-router-dom";
 import "leaflet/dist/leaflet.css";
@@ -78,6 +78,46 @@ const referenciaVisible = (comunicat) =>
   comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
 
 const esEmailValid = (email) => /\S+@\S+\.\S+/.test(email);
+const MISSATGE_RUTA_ERROR =
+  "No s'ha pogut calcular la ruta. Revisa el destí o prova amb una adreça més concreta.";
+const MISSATGE_MAPA_NO_GENERAT =
+  "No s'ha pogut generar el mapa de la ruta. El comunicat és igualment vàlid.";
+const RUTES_HABITUALS = [
+  "Voltor, Llucmajor",
+  "Carrer de Voltor, Llucmajor",
+  "Llucmajor",
+  "S'Arenal, Llucmajor",
+  "Badia Gran, Llucmajor",
+  "Badia Blava, Llucmajor",
+  "Maioris, Llucmajor",
+  "Sa Torre, Llucmajor",
+  "Son Verí Nou, Llucmajor",
+  "Cala Blava, Llucmajor",
+  "Estanyol, Llucmajor",
+];
+
+const crearVariantsRuta = (ruta) => {
+  const rutaNeta = ruta.trim().replace(/\s+/g, " ");
+  if (!rutaNeta) return [];
+
+  const rutaLower = rutaNeta.toLowerCase();
+  const conteMunicipi = /llucmajor|mallorca|illes balears|islas baleares|spain|españa/.test(rutaLower);
+  const variants = [
+    rutaNeta,
+    ...(conteMunicipi
+      ? []
+      : [
+          `${rutaNeta}, Llucmajor`,
+          `${rutaNeta}, Llucmajor, Mallorca`,
+          `${rutaNeta}, Illes Balears, España`,
+        ]),
+    ...(rutaLower.includes("carrer de ")
+      ? [rutaNeta.replace(/^carrer de\s+/i, ""), `${rutaNeta.replace(/^carrer de\s+/i, "")}, Llucmajor`]
+      : []),
+  ];
+
+  return [...new Set(variants.map((variant) => variant.trim()).filter(Boolean))];
+};
 
 export default function AppFinalFormulari({ topActions = null }) {
   const { id } = useParams();
@@ -98,9 +138,14 @@ export default function AppFinalFormulari({ topActions = null }) {
   const [oficialsTelefons, setOficialsTelefons] = useState({});
   const [mapReady, setMapReady] = useState(false);
   const [enviant, setEnviant] = useState(false);
+  const [routeStatus, setRouteStatus] = useState("idle");
+  const [routeErrorMsg, setRouteErrorMsg] = useState("");
+  const [mostrarSuggerimentsRuta, setMostrarSuggerimentsRuta] = useState(false);
 
   const mapRef = useRef(null);
   const impressioRef = useRef(null);
+  const lastRouteRequestRef = useRef("");
+  const routeAbortRef = useRef(null);
 
   const carregarConfiguracio = async () => {
     try {
@@ -215,9 +260,10 @@ export default function AppFinalFormulari({ topActions = null }) {
 
         if (Array.isArray(data.rutaCoords) && data.rutaCoords.length > 0) {
           setRouteCoords(convertirRutaDesDeFirestore(data.rutaCoords));
+          lastRouteRequestRef.current = (normalitzat.ruta || "").trim().toLowerCase();
+          setRouteStatus("success");
+          setRouteErrorMsg("");
           setStatusMsg("Ruta carregada desada ✅");
-        } else if (normalitzat.ruta) {
-          fetchRoute(normalitzat.ruta);
         }
 
         setStatusMsg("Comunicat carregat per editar ✏️");
@@ -229,6 +275,33 @@ export default function AppFinalFormulari({ topActions = null }) {
 
     carregarComunicat();
   }, [editId, navigate]);
+
+  useEffect(() => {
+    const destination = formData.ruta?.trim() || "";
+
+    if (!destination) {
+      routeAbortRef.current?.abort();
+      lastRouteRequestRef.current = "";
+      setRouteCoords([]);
+      setRouteStatus("idle");
+      setRouteErrorMsg("");
+      return;
+    }
+
+    if (destination.length < 4) {
+      routeAbortRef.current?.abort();
+      setRouteCoords([]);
+      setRouteStatus("idle");
+      setRouteErrorMsg("");
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      fetchRoute(destination);
+    }, 700);
+
+    return () => clearTimeout(timeoutId);
+  }, [formData.ruta]);
 
   const getConfigActualitzada = (camp, actualitzat) => ({
     responsables: camp === "responsables" ? actualitzat : responsables,
@@ -280,8 +353,6 @@ export default function AppFinalFormulari({ topActions = null }) {
       [field]: value,
       ...extra,
     }));
-
-    if (field === "ruta") fetchRoute(value);
   };
 
   const toggleValorCamp = (camp, valor) => {
@@ -356,10 +427,28 @@ export default function AppFinalFormulari({ topActions = null }) {
     telefonsDestinatarisVisibles.length > 0
       ? telefonsDestinatarisVisibles.join(", ")
       : formData.telefon;
+  const suggerimentsRuta = useMemo(() => {
+    const ruta = formData.ruta?.trim() || "";
+    if (ruta.length < 2) return [];
+
+    const rutaLower = ruta.toLowerCase();
+    const suggerimentsHabituals = RUTES_HABITUALS.filter((opcio) =>
+      opcio.toLowerCase().includes(rutaLower)
+    );
+    const variants = crearVariantsRuta(ruta).filter(
+      (opcio) => opcio.toLowerCase() !== rutaLower
+    );
+
+    return [...new Set([...suggerimentsHabituals, ...variants])].slice(0, 6);
+  }, [formData.ruta]);
 
   const handleReset = () => {
     setFormData(emptyFormData);
     setRouteCoords([]);
+    setRouteStatus("idle");
+    setRouteErrorMsg("");
+    lastRouteRequestRef.current = "";
+    routeAbortRef.current?.abort();
     setStatusMsg("Formulari reiniciat ✨");
   };
 
@@ -419,86 +508,149 @@ export default function AppFinalFormulari({ topActions = null }) {
     }
   };
 
-  const fetchRoute = async (destination) => {
-    if (!destination || destination.trim().length < 4) {
+  const fetchRoute = async (destination, { force = false } = {}) => {
+    const destinationTrimmed = destination?.trim() || "";
+    const routeKey = destinationTrimmed.toLowerCase();
+
+    if (!destinationTrimmed || destinationTrimmed.length < 4) {
+      routeAbortRef.current?.abort();
+      lastRouteRequestRef.current = "";
       setRouteCoords([]);
+      setRouteStatus("idle");
+      setRouteErrorMsg("");
       return;
     }
 
+    if (!force && lastRouteRequestRef.current === routeKey) {
+      return;
+    }
+
+    routeAbortRef.current?.abort();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    routeAbortRef.current = controller;
+    lastRouteRequestRef.current = routeKey;
+
+    setRouteStatus("loading");
+    setRouteErrorMsg("");
     setStatusMsg("Carregant ruta...");
 
     try {
-      const queryPrincipal = destination.includes("Mallorca")
-        ? destination
-        : `${destination}, Mallorca, Spain`;
+      let polyline = [];
+      let ultimError = null;
+      const variantsRuta = crearVariantsRuta(destinationTrimmed);
 
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-          queryPrincipal
-        )}&format=json&limit=1`
-      );
+      for (const variant of variantsRuta) {
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+              variant
+            )}&format=json&limit=1`,
+            { signal: controller.signal }
+          );
 
-      let data = await res.json();
+          if (!res.ok) {
+            throw new Error("No s'han pogut obtenir coordenades del destí.");
+          }
 
-      if (!data.length) {
-        console.warn("Intent 1 fallit, provant fallback...");
+          const data = await res.json();
 
-        const res2 = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-            destination
-          )}&format=json&limit=1`
-        );
+          if (!Array.isArray(data) || !data.length) {
+            throw new Error(`Sense coordenades per a: ${variant}`);
+          }
 
-        data = await res2.json();
-      }
+          const lon = parseFloat(data[0].lon);
+          const lat = parseFloat(data[0].lat);
 
-      if (!data.length) {
-        setStatusMsg("❌ No s'ha trobat la ruta");
-        setRouteCoords([]);
-        return;
-      }
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+            throw new Error(`Coordenades no vàlides per a: ${variant}`);
+          }
 
-      const coords = [parseFloat(data[0].lon), parseFloat(data[0].lat)];
+          const coords = [lon, lat];
+          const routeRes = await fetch(
+            "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+            {
+              method: "POST",
+              headers: {
+                Authorization: "5b3ce3597851110001cf6248b9be20c2ac9f4960afb9260f5d30097e",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ coordinates: [[2.89174, 39.4924], coords] }),
+              signal: controller.signal,
+            }
+          );
 
-      const routeRes = await fetch(
-        "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
-        {
-          method: "POST",
-          headers: {
-            Authorization: "5b3ce3597851110001cf6248b9be20c2ac9f4960afb9260f5d30097e",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ coordinates: [[2.89174, 39.4924], coords] }),
+          if (!routeRes.ok) {
+            throw new Error(`OpenRouteService no ha calculat la variant: ${variant}`);
+          }
+
+          const geojson = await routeRes.json();
+          const coordinates = geojson?.features?.[0]?.geometry?.coordinates;
+
+          if (!Array.isArray(coordinates) || coordinates.length === 0) {
+            throw new Error(`Ruta buida per a: ${variant}`);
+          }
+
+          polyline = coordinates
+            .map((c) => [c[1], c[0]])
+            .filter(([latitud, longitud]) =>
+              Number.isFinite(latitud) && Number.isFinite(longitud)
+            );
+
+          if (polyline.length === 0) {
+            throw new Error(`Ruta sense coordenades vàlides per a: ${variant}`);
+          }
+
+          break;
+        } catch (errorVariant) {
+          if (errorVariant.name === "AbortError") throw errorVariant;
+          ultimError = errorVariant;
+          console.warn("Variant de ruta fallida:", variant, errorVariant.message);
         }
-      );
-
-      if (!routeRes.ok) {
-        throw new Error("Error carregant la ruta des d'OpenRouteService.");
       }
 
-      const geojson = await routeRes.json();
-
-      if (
-        !geojson.features ||
-        !geojson.features.length ||
-        !geojson.features[0].geometry ||
-        !geojson.features[0].geometry.coordinates
-      ) {
-        throw new Error("La ruta rebuda no és vàlida.");
+      if (polyline.length === 0) {
+        throw ultimError || new Error("No s'ha pogut calcular cap variant de ruta.");
       }
-
-      const polyline = geojson.features[0].geometry.coordinates.map((c) => [
-        c[1],
-        c[0],
-      ]);
 
       setRouteCoords(polyline);
+      setRouteStatus("success");
+      setRouteErrorMsg("");
       setStatusMsg("Ruta carregada ✅");
     } catch (err) {
+      if (err.name === "AbortError") return;
+
       console.error("Error generant la ruta:", err.message);
-      setStatusMsg("No s'ha pogut carregar la ruta ❌");
       setRouteCoords([]);
+      setRouteStatus("error");
+      setRouteErrorMsg(MISSATGE_RUTA_ERROR);
+      setStatusMsg(MISSATGE_RUTA_ERROR);
+    } finally {
+      clearTimeout(timeoutId);
     }
+  };
+
+  const generarImatgeMapaNoDisponible = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200;
+    canvas.height = 320;
+
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#cbd5e1";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(18, 18, canvas.width - 36, canvas.height - 36);
+    ctx.fillStyle = "#334155";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 38px Arial, sans-serif";
+    ctx.fillText("No s'ha pogut generar el mapa de la ruta.", canvas.width / 2, 135);
+    ctx.font = "32px Arial, sans-serif";
+    ctx.fillText("El comunicat és igualment vàlid.", canvas.width / 2, 190);
+
+    return canvas.toDataURL("image/jpeg", 0.72);
   };
 
 const handleSubmit = async (e) => {
@@ -514,16 +666,17 @@ const handleSubmit = async (e) => {
 
   try {
     let imgMapa = "";
+    const rutaAmbError = routeStatus === "error";
 
     try {
-      if (!mapRef.current || !mapReady) {
+      if (rutaAmbError) {
+        console.warn("Mapa no capturat perquè la ruta té un error.");
+      } else if (!mapRef.current || !mapReady) {
         console.warn("⚠️ El mapa encara no està llest.");
-      } else {
-        if (routeCoords.length > 0) {
-          const bounds = L.latLngBounds(routeCoords);
-          mapRef.current.fitBounds(bounds, { padding: [20, 20] });
-          await new Promise((resolve) => setTimeout(resolve, 1200));
-        }
+      } else if (routeCoords.length > 0) {
+        const bounds = L.latLngBounds(routeCoords);
+        mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+        await new Promise((resolve) => setTimeout(resolve, 1200));
 
         mapRef.current.invalidateSize();
         await new Promise((resolve) => setTimeout(resolve, 600));
@@ -544,19 +697,12 @@ const handleSubmit = async (e) => {
       console.error("❌ Error capturant mapa:", error);
     }
 
-    console.log("Mapa generat?", !!imgMapa);
-    console.log("Longitud mapa:", imgMapa?.length || 0);
-    console.log("Inici mapa:", imgMapa?.slice(0, 50) || "");
-
-    if (!imgMapa) {
-      alert("❌ No s'ha pogut capturar el mapa. Espera un moment i torna-ho a provar.");
-      return;
-    }
-
     if (imgMapa.length > 45000) {
       alert("❌ La imatge del mapa encara és massa gran per EmailJS.");
       return;
     }
+
+    const mapaPerCorreu = imgMapa || (rutaAmbError ? generarImatgeMapaNoDisponible() : "");
 
     const {
       dataBase: dataFormulari,
@@ -571,7 +717,7 @@ const handleSubmit = async (e) => {
       any: Number(any),
       mes: Number(mes),
       mapa: imgMapa,
-      rutaCoords: convertirRutaPerFirestore(routeCoords),
+      rutaCoords: routeStatus === "success" ? convertirRutaPerFirestore(routeCoords) : [],
       updatedAt: serverTimestamp(),
     };
 
@@ -601,6 +747,9 @@ const handleSubmit = async (e) => {
       updatedAt: new Date().toISOString(),
       referenciaComunicat: referenciaPerCorreu,
       incidencia: referenciaPerCorreu,
+      mapa: mapaPerCorreu,
+      mapaText: rutaAmbError ? MISSATGE_MAPA_NO_GENERAT : "",
+      mapaDisponible: imgMapa ? "sí" : "no",
       responsableBrigada: Array.isArray(dadesAmbMapa.responsableBrigada)
         ? dadesAmbMapa.responsableBrigada.join(", ")
         : dadesAmbMapa.responsableBrigada || "",
@@ -852,13 +1001,40 @@ const handleSubmit = async (e) => {
 
         <div className="input-group">
           <label className="field-label">Ruta a seguir</label>
-        <input
-          type="text"
-          value={formData.ruta}
-          onChange={(e) => handleChange("ruta", e.target.value)}
-          placeholder="Ruta a seguir"
+          <input
+            type="text"
+            value={formData.ruta}
+            onChange={(e) => {
+              handleChange("ruta", e.target.value);
+              setMostrarSuggerimentsRuta(true);
+            }}
+            onFocus={() => setMostrarSuggerimentsRuta(true)}
+            onBlur={() => {
+              setTimeout(() => setMostrarSuggerimentsRuta(false), 150);
+            }}
+            placeholder="Ruta o destinació"
             className="form-input"
-        />
+            autoComplete="off"
+          />
+
+          {mostrarSuggerimentsRuta && suggerimentsRuta.length > 0 && (
+            <div className="route-suggestions">
+              {suggerimentsRuta.map((suggeriment) => (
+                <button
+                  type="button"
+                  key={suggeriment}
+                  className="route-suggestion"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    handleChange("ruta", suggeriment);
+                    setMostrarSuggerimentsRuta(false);
+                  }}
+                >
+                  {suggeriment}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="input-group">
@@ -957,38 +1133,55 @@ const handleSubmit = async (e) => {
       </form>
 
       <div className="map-card">
-      <MapContainer
-        center={center}
-        zoom={13}
-        preferCanvas={true}
-        style={{ height: "300px", width: "100%" }}
-        whenReady={(event) => {
-          mapRef.current = event.target;
-          setMapReady(true);
-        }}
-      >
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        <Marker
-          position={center}
-          icon={L.icon({
-            iconUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png",
-          })}
-        >
-          <Popup>Sortida: Carrer de Castella, Llucmajor</Popup>
-        </Marker>
+        {routeStatus === "error" ? (
+          <div className="route-error-card">
+            <p className="route-error-title">{MISSATGE_MAPA_NO_GENERAT}</p>
+            <p className="route-error-text">{routeErrorMsg || MISSATGE_RUTA_ERROR}</p>
+            <button
+              type="button"
+              onClick={() => fetchRoute(formData.ruta, { force: true })}
+              className="button-secondary route-retry-button"
+              disabled={routeStatus === "loading"}
+            >
+              Reintentar ruta
+            </button>
+          </div>
+        ) : (
+          <MapContainer
+            center={center}
+            zoom={13}
+            preferCanvas={true}
+            style={{ height: "300px", width: "100%" }}
+            whenReady={(event) => {
+              mapRef.current = event.target;
+              setMapReady(true);
+            }}
+          >
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <Marker
+              position={center}
+              icon={L.icon({
+                iconUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png",
+              })}
+            >
+              <Popup>Sortida: Carrer de Castella, Llucmajor</Popup>
+            </Marker>
 
-        {routeCoords.length > 0 && (
-          <Polyline
-            positions={routeCoords}
-            pathOptions={{ color: "blue", weight: 4 }}
-          />
+            {routeCoords.length > 0 && (
+              <Polyline
+                positions={routeCoords}
+                pathOptions={{ color: "blue", weight: 4 }}
+              />
+            )}
+          </MapContainer>
         )}
-      </MapContainer>
       </div>
 
       <ImpressioComunicat
         comunicat={formData}
         mapaRef={mapRef}
+        mapaNoDisponible={routeStatus === "error"}
+        missatgeMapaNoDisponible={MISSATGE_MAPA_NO_GENERAT}
         onPrintReady={(handlePrint) => {
           impressioRef.current = handlePrint;
         }}

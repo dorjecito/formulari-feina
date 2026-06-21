@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 
-export default function ImpressioComunicat({ comunicat, mapaRef, onPrintReady }) {
+export default function ImpressioComunicat({
+ comunicat,
+ mapaRef,
+ mapaNoDisponible = false,
+ missatgeMapaNoDisponible = "No s'ha pogut generar el mapa de la ruta. El comunicat és igualment vàlid.",
+ onPrintReady,
+}) {
 
  const printRef = useRef();
  const [mapaImg, setMapaImg] = useState("");
@@ -9,7 +15,9 @@ export default function ImpressioComunicat({ comunicat, mapaRef, onPrintReady })
    comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
 
  const handlePrint = async () => {
-   if (mapaRef && mapaRef.current) {
+   if (mapaNoDisponible) {
+     setMapaImg("");
+   } else if (mapaRef && mapaRef.current) {
      const mapElement =
        typeof mapaRef.current.getContainer === "function"
          ? mapaRef.current.getContainer()
@@ -62,7 +70,19 @@ export default function ImpressioComunicat({ comunicat, mapaRef, onPrintReady })
          <p>{comunicat.oficialResponsable}</p>
        </div>
 
-       {mapaImg && (
+       {mapaNoDisponible ? (
+         <div style={{
+           marginTop: '20px',
+           border: '1px solid #cbd5e1',
+           backgroundColor: '#f8fafc',
+           padding: '15px',
+           borderRadius: '8px',
+           textAlign: 'center'
+         }}>
+           <h3>Ruta al mapa:</h3>
+           <p><strong>{missatgeMapaNoDisponible}</strong></p>
+         </div>
+       ) : mapaImg && (
          <div style={{ marginTop: '20px' }}>
            <h3>Ruta al mapa:</h3>
            <img src={mapaImg} alt="Mapa ruta" style={{ width: '100%', maxWidth: '600px' }} />

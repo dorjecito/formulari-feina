@@ -267,6 +267,32 @@
   text-align: center;
 }
 
+.route-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.route-suggestion {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #334155;
+  padding: 9px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+
+.route-suggestion:hover,
+.route-suggestion:focus {
+  border-color: #2b6cb0;
+  background: #ebf8ff;
+  outline: none;
+}
+
 .map-card {
   width: 100%;
   max-width: 850px;
@@ -276,6 +302,37 @@
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+}
+
+.route-error-card {
+  min-height: 220px;
+  padding: 28px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.route-error-title {
+  margin: 0;
+  color: #334155;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.route-error-text {
+  margin: 0;
+  max-width: 560px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.route-retry-button {
+  width: auto;
+  min-width: 160px;
 }
 
 @media (max-width: 640px) {
@@ -306,6 +363,19 @@
 
   .top-nav-actions {
     flex-direction: column;
+  }
+
+  .route-retry-button {
+    width: 100%;
+  }
+
+  .route-suggestions {
+    flex-direction: column;
+  }
+
+  .route-suggestion {
+    width: 100%;
+    min-height: 44px;
   }
 
   .form-actions {
