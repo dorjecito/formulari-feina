@@ -25,11 +25,17 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  const isDemoMode = isDemoUser(user);
+
+  useEffect(() => {
+    if (user && !isDemoMode && localStorage.getItem(DEMO_SESSION_KEY) === "true") {
+      localStorage.removeItem(DEMO_SESSION_KEY);
+    }
+  }, [user, isDemoMode]);
+
   if (loading) return <p>Carregant...</p>;
 
   console.log("Usuari logat?", user);
-  const isDemoMode =
-    isDemoUser(user) || localStorage.getItem(DEMO_SESSION_KEY) === "true";
 
   return (
     <Router>

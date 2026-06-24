@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
+import { normalitzarLlocsFeina } from './llocsFeina';
 
 export default function ImpressioComunicat({
  comunicat,
@@ -11,9 +12,12 @@ export default function ImpressioComunicat({
 }) {
 
  const printRef = useRef();
- const [mapaImg, setMapaImg] = useState("");
- const referenciaVisible =
-   comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
+	 const [mapaImg, setMapaImg] = useState("");
+	 const referenciaVisible =
+	   comunicat?.referenciaComunicat || comunicat?.incidencia || "Sense referència";
+	 const llocsFeina = normalitzarLlocsFeina(comunicat);
+	 const etiquetaLlocsFeina =
+	   llocsFeina.length > 1 ? "Llocs de feina" : "Lloc de feina";
 
  const handlePrint = async () => {
    if (mapaNoDisponible) {
@@ -83,17 +87,27 @@ export default function ImpressioComunicat({
        <p><strong>Email:</strong> {comunicat.email}</p>
        <p><strong>Data:</strong> {comunicat.data}</p>
        <p><strong>Referència:</strong> {referenciaVisible}</p>
-       <p><strong>Responsable brigada:</strong> {comunicat.responsableBrigada}</p>
-       <p><strong>Oficial responsable:</strong> {comunicat.oficialResponsable}</p>
-       <p><strong>Oficials:</strong> {(comunicat.oficial || []).join(", ")}</p>
-       <p><strong>Peons:</strong> {(comunicat.peo || []).join(", ")}</p>
-       <p><strong>Incidència:</strong> {comunicat.incidencia}</p>
-       <p><strong>Matrícula:</strong>{" "}
-        {Array.isArray(comunicat.matricula)
-          ? comunicat.matricula.join(", ")
-          : comunicat.matricula || ""}</p>
-       <p><strong>Ruta:</strong> {comunicat.ruta}</p>
-       <p><strong>Eines:</strong> {(comunicat.eines || []).join(", ")}</p>
+	       <p><strong>Responsable brigada:</strong> {comunicat.responsableBrigada}</p>
+	       <p><strong>Oficial responsable:</strong> {comunicat.oficialResponsable}</p>
+	       <p><strong>Oficials:</strong> {(comunicat.oficial || []).join(", ")}</p>
+	       <p><strong>Peons:</strong> {(comunicat.peo || []).join(", ")}</p>
+	       <p><strong>Matrícula:</strong>{" "}
+	        {Array.isArray(comunicat.matricula)
+	          ? comunicat.matricula.join(", ")
+	          : comunicat.matricula || ""}</p>
+	       <div style={{ margin: '12px 0' }}>
+	         <p style={{ marginBottom: '6px' }}><strong>{etiquetaLlocsFeina}:</strong></p>
+	         {llocsFeina.length > 1 ? (
+	           <ul style={{ marginTop: 0 }}>
+	             {llocsFeina.map((lloc) => (
+	               <li key={lloc}>{lloc}</li>
+	             ))}
+	           </ul>
+	         ) : (
+	           <p style={{ marginTop: 0 }}>{llocsFeina[0] || 'Sense lloc de feina'}</p>
+	         )}
+	       </div>
+	       <p><strong>Eines:</strong> {(comunicat.eines || []).join(", ")}</p>
        <p><strong>Tasques:</strong> {(comunicat.feines || []).join(", ")}</p>
        <p><strong>Observacions:</strong> {comunicat.observacions}</p>
 

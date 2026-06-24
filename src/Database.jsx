@@ -12,7 +12,13 @@ import {
 import { db } from "./firebase";
 import { Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
-import { DEMO_ENV, isDemoComunicat, isRealComunicat } from "./demo";
+import {
+  deleteDemoComunicatLocal,
+  getDemoComunicatsLocals,
+  isDemoComunicat,
+  isRealComunicat,
+} from "./demo";
+import { formatLlocsFeina, normalitzarLlocsFeina } from "./llocsFeina";
 
 export default function Database({ isDemoMode = false }) {
   const avui = new Date();
@@ -86,9 +92,10 @@ export default function Database({ isDemoMode = false }) {
   };
 
   const filtrarPerEntorn = (dades) =>
-    dades.filter((comunicat) =>
-      isDemoMode ? isDemoComunicat(comunicat) : isRealComunicat(comunicat)
-    );
+    dades.filter((comunicat) => {
+      if (comunicat.deleted) return false;
+      return isDemoMode ? isDemoComunicat(comunicat) : isRealComunicat(comunicat);
+    });
 
   const filtrarPerAnyMes = (dades) =>
     dades.filter((comunicat) => {
@@ -106,12 +113,18 @@ export default function Database({ isDemoMode = false }) {
     setLoading(true);
 
     try {
+      if (isDemoMode) {
+        const dades = filtrarPerAnyMes(filtrarPerEntorn(getDemoComunicatsLocals())).sort((a, b) =>
+          (b.data || "").localeCompare(a.data || "")
+        );
+        setComunicats(dades);
+        return;
+      }
+
       const ref = collection(db, "comunicatsNova");
       let consultes = [ref];
 
-      if (isDemoMode) {
-        consultes = [query(ref, where("entorn", "==", DEMO_ENV))];
-      } else if (filtreAny && filtreMes) {
+      if (filtreAny && filtreMes) {
         consultes = valorsFiltreAny(filtreAny).flatMap((valorAny) =>
           valorsFiltreMes(filtreMes).map((valorMes) =>
             query(
@@ -147,19 +160,26 @@ export default function Database({ isDemoMode = false }) {
 
   const fetchTotsElsComunicats = async () => {
     try {
+      if (isDemoMode) {
+        const dades = filtrarPerEntorn(getDemoComunicatsLocals()).sort((a, b) =>
+          (b.data || "").localeCompare(a.data || "")
+        );
+        setTotsElsComunicats(dades);
+        return;
+      }
+
       const ref = collection(db, "comunicatsNova");
-      const querySnapshot = await getDocs(
-        isDemoMode ? query(ref, where("entorn", "==", DEMO_ENV)) : ref
-      );
+      const querySnapshot = await getDocs(ref);
 
       const dades = querySnapshot.docs
         .map((docSnap) => ({
           id: docSnap.id,
           ...docSnap.data(),
         }))
-        .filter((comunicat) =>
-          isDemoMode ? isDemoComunicat(comunicat) : isRealComunicat(comunicat)
-        )
+        .filter((comunicat) => {
+          if (comunicat.deleted) return false;
+          return isDemoMode ? isDemoComunicat(comunicat) : isRealComunicat(comunicat);
+        })
         .sort((a, b) => (b.data || "").localeCompare(a.data || ""));
 
       setTotsElsComunicats(dades);
@@ -181,14 +201,25 @@ export default function Database({ isDemoMode = false }) {
     const id = comunicat.id;
 
     if (window.confirm("Vols eliminar aquest comunicat? Aquesta acció no es pot desfer.")) {
-      await deleteDoc(doc(db, "comunicatsNova", id));
+      try {
+        if (isDemoMode) {
+          deleteDemoComunicatLocal(id);
+        } else {
+          await deleteDoc(doc(db, "comunicatsNova", id));
+        }
 
-      if (comunicatSeleccionat?.id === id) {
-        setComunicatSeleccionat(null);
+        if (comunicatSeleccionat?.id === id) {
+          setComunicatSeleccionat(null);
+        }
+
+        fetchComunicats();
+        fetchTotsElsComunicats();
+      } catch (error) {
+        console.error("Error eliminant comunicat:", error);
+        alert(
+          "❌ No s'ha pogut eliminar el comunicat. Revisa que hagis entrat amb l'usuari demo correcte."
+        );
       }
-
-      fetchComunicats();
-      fetchTotsElsComunicats();
     }
   };
 
@@ -196,6 +227,14 @@ export default function Database({ isDemoMode = false }) {
     if (Array.isArray(value)) return value.join(", ");
     return value || "";
   };
+
+  const obtenirLlocsFeina = (comunicat) => normalitzarLlocsFeina(comunicat);
+
+  const etiquetaLlocsFeina = (comunicat) =>
+    obtenirLlocsFeina(comunicat).length > 1 ? "Llocs de feina" : "Lloc de feina";
+
+  const textLlocsFeina = (comunicat) =>
+    formatLlocsFeina(obtenirLlocsFeina(comunicat)) || "Sense lloc de feina";
 
   const formatDataLocalISO = (date) => {
     const any = date.getFullYear();
@@ -299,12 +338,16 @@ export default function Database({ isDemoMode = false }) {
       `Eines: ${formatValue(comunicat.eines)}`,
       `Tasques: ${formatValue(comunicat.feines)}`,
       `Matrícula: ${formatValue(comunicat.matricula)}`,
-      `Incidència: ${formatValue(comunicat.incidencia)}`,
-      `Ruta: ${formatValue(comunicat.ruta)}`,
+      `${etiquetaLlocsFeina(comunicat)}: ${textLlocsFeina(comunicat)}`,
       `Observacions: ${formatValue(comunicat.observacions)}`,
     ];
 
-    linies.forEach((t, i) => docu.text(t, 14, (isDemoMode ? 37 : 30) + i * 10));
+    let y = isDemoMode ? 37 : 30;
+    linies.forEach((text) => {
+      const liniesPartides = docu.splitTextToSize(text, 180);
+      docu.text(liniesPartides, 14, y);
+      y += liniesPartides.length * 7 + 3;
+    });
     docu.save(`comunicat_${comunicat.data || "sense_data"}.pdf`);
   };
 
@@ -667,8 +710,7 @@ export default function Database({ isDemoMode = false }) {
                 "Eines",
                 "Tasques",
                 "Matrícula",
-                "Incidència",
-                "Ruta",
+                "Llocs de feina",
                 "Observacions",
                 "Accions",
               ].map((t, i) => (
@@ -691,8 +733,7 @@ export default function Database({ isDemoMode = false }) {
                 <td style={celda}>{formatValue(c.eines)}</td>
                 <td style={celda}>{formatValue(c.feines)}</td>
                 <td style={celda}>{formatValue(c.matricula)}</td>
-                <td style={celda}>{formatValue(c.incidencia)}</td>
-                <td style={celda}>{formatValue(c.ruta)}</td>
+                <td style={celda} className="multiline-cell">{textLlocsFeina(c)}</td>
                 <td style={celda}>{formatValue(c.observacions)}</td>
 
                 <td style={{ ...celda, textAlign: "center", minWidth: "110px" }}>
@@ -844,8 +885,10 @@ export default function Database({ isDemoMode = false }) {
           <p><strong>Eines:</strong> {formatValue(comunicatSeleccionat.eines)}</p>
           <p><strong>Tasques:</strong> {formatValue(comunicatSeleccionat.feines)}</p>
           <p><strong>Matrícula:</strong> {formatValue(comunicatSeleccionat.matricula)}</p>
-          <p><strong>Incidència:</strong> {formatValue(comunicatSeleccionat.incidencia)}</p>
-          <p><strong>Ruta:</strong> {formatValue(comunicatSeleccionat.ruta)}</p>
+          <p>
+            <strong>{etiquetaLlocsFeina(comunicatSeleccionat)}:</strong>{" "}
+            <span style={{ whiteSpace: "pre-line" }}>{textLlocsFeina(comunicatSeleccionat)}</span>
+          </p>
           <p><strong>Observacions:</strong> {formatValue(comunicatSeleccionat.observacions)}</p>
 
           <div style={{ textAlign: "center", marginTop: "20px" }}>

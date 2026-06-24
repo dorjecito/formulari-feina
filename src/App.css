@@ -320,6 +320,46 @@
   outline: none;
 }
 
+.field-sublabel {
+  display: block;
+  margin-bottom: 6px;
+  color: #475569;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.work-locations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.work-location-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.work-location-input-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.work-location-add {
+  margin-top: 10px;
+  width: auto;
+}
+
+.work-location-remove {
+  min-height: 46px;
+  white-space: nowrap;
+}
+
+.multiline-cell {
+  white-space: pre-line;
+}
+
 .map-card {
   width: 100%;
   max-width: 850px;
@@ -403,6 +443,15 @@
   .route-suggestion {
     width: 100%;
     min-height: 44px;
+  }
+
+  .work-location-row {
+    grid-template-columns: 1fr;
+  }
+
+  .work-location-add,
+  .work-location-remove {
+    width: 100%;
   }
 
   .form-actions {

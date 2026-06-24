@@ -4,6 +4,7 @@ export const DEMO_PASSWORD = "convidat2026";
 export const DEMO_ENV = "demo";
 export const REAL_ENV = "real";
 export const DEMO_SESSION_KEY = "comunicatsFeinaDemoMode";
+export const DEMO_COMUNICATS_KEY = "comunicatsFeinaDemoComunicats";
 
 export const isDemoIdentifier = (identifier) => {
   const normalized = identifier.trim().toLowerCase();
@@ -60,4 +61,41 @@ export const applyDemoConfig = ({
   setTasques(DEMO_CONFIG.tasques);
   setOficialsEmails(DEMO_CONFIG.oficialsEmails);
   setOficialsTelefons(DEMO_CONFIG.oficialsTelefons);
+};
+
+export const getDemoComunicatsLocals = () => {
+  try {
+    const raw = localStorage.getItem(DEMO_COMUNICATS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((comunicat) => !comunicat.deleted) : [];
+  } catch (error) {
+    console.warn("No s'han pogut llegir els comunicats demo locals.", error);
+    return [];
+  }
+};
+
+export const saveDemoComunicatLocal = (comunicat) => {
+  const comunicats = getDemoComunicatsLocals();
+  const existentIndex = comunicats.findIndex((item) => item.id === comunicat.id);
+  const actualitzat = {
+    ...comunicat,
+    entorn: DEMO_ENV,
+  };
+
+  if (existentIndex >= 0) {
+    comunicats[existentIndex] = actualitzat;
+  } else {
+    comunicats.unshift(actualitzat);
+  }
+
+  localStorage.setItem(DEMO_COMUNICATS_KEY, JSON.stringify(comunicats));
+  return actualitzat;
+};
+
+export const getDemoComunicatLocal = (id) =>
+  getDemoComunicatsLocals().find((comunicat) => comunicat.id === id) || null;
+
+export const deleteDemoComunicatLocal = (id) => {
+  const comunicats = getDemoComunicatsLocals().filter((comunicat) => comunicat.id !== id);
+  localStorage.setItem(DEMO_COMUNICATS_KEY, JSON.stringify(comunicats));
 };

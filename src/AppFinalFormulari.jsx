@@ -23,9 +23,16 @@ import {
   REAL_ENV,
   DEMO_CONFIG,
   applyDemoConfig,
+  getDemoComunicatLocal,
   isDemoComunicat,
   isRealComunicat,
+  saveDemoComunicatLocal,
 } from "./demo";
+import {
+  formatLlocsFeina,
+  netejarPaisEspanya,
+  normalitzarLlocsFeina,
+} from "./llocsFeina";
 import ImpressioComunicat from "./ImpressioComunicat";
 
 const center = [39.4924, 2.89174]; // Carrer de Castella, Llucmajor
@@ -41,6 +48,7 @@ const emptyFormData = {
   eines: [],
   matricula: [],
   feines: [],
+  llocsFeina: [],
   ruta: "",
   observacions: "",
   to_email: "",
@@ -136,6 +144,8 @@ const getDemoFormData = () => ({
   eines: ["Equip Demo"],
   matricula: ["TEST001"],
   feines: ["Tasca de demostració"],
+  llocsFeina: ["Cala Blava"],
+  ruta: "Cala Blava",
   to_email: DEMO_CONFIG.oficialsEmails["Oficial Demo"],
   telefon: DEMO_CONFIG.oficialsTelefons["Oficial Demo"],
 });
@@ -148,6 +158,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
   const [formData, setFormData] = useState(emptyFormData);
   const [statusMsg, setStatusMsg] = useState("");
   const [routeCoords, setRouteCoords] = useState([]);
+  const [routeMarkers, setRouteMarkers] = useState([]);
   const [responsables, setResponsables] = useState([]);
   const [oficialsResponsables, setOficialsResponsables] = useState([]);
   const [oficials, setOficials] = useState([]);
@@ -162,6 +173,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
   const [routeStatus, setRouteStatus] = useState("idle");
   const [routeErrorMsg, setRouteErrorMsg] = useState("");
   const [mostrarSuggerimentsRuta, setMostrarSuggerimentsRuta] = useState(false);
+  const [llocSuggerimentsActiu, setLlocSuggerimentsActiu] = useState(0);
 
   const mapRef = useRef(null);
   const impressioRef = useRef(null);
@@ -243,16 +255,19 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
       if (!editId) return;
 
       try {
-        const docRef = doc(db, "comunicatsNova", editId);
-        const docSnap = await getDoc(docRef);
+        const data = isDemoMode
+          ? getDemoComunicatLocal(editId)
+          : await (async () => {
+              const docRef = doc(db, "comunicatsNova", editId);
+              const docSnap = await getDoc(docRef);
+              return docSnap.exists() ? docSnap.data() : null;
+            })();
 
-        if (!docSnap.exists()) {
+        if (!data) {
           alert("❌ El comunicat no existeix.");
           navigate("/database");
           return;
         }
-
-        const data = docSnap.data();
 
         if (
           (isDemoMode && !isDemoComunicat(data)) ||
@@ -263,6 +278,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
           return;
         }
 
+        const llocsNormalitzats = normalitzarLlocsFeina(data);
         const normalitzat = {
           data: data.data || "",
           responsableBrigada: Array.isArray(data.responsableBrigada)
@@ -302,7 +318,8 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
             : data.feines
             ? [data.feines]
             : [],
-          ruta: data.ruta || "",
+          llocsFeina: llocsNormalitzats,
+          ruta: formatLlocsFeina(llocsNormalitzats),
           observacions: data.observacions || "",
           to_email: data.to_email || "",
           telefon: data.telefon || "",
@@ -313,7 +330,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
 
         if (Array.isArray(data.rutaCoords) && data.rutaCoords.length > 0) {
           setRouteCoords(convertirRutaDesDeFirestore(data.rutaCoords));
-          lastRouteRequestRef.current = (normalitzat.ruta || "").trim().toLowerCase();
+          lastRouteRequestRef.current = llocsNormalitzats.join("|").trim().toLowerCase();
           setRouteStatus("success");
           setRouteErrorMsg("");
           setStatusMsg("Ruta carregada desada ✅");
@@ -329,13 +346,20 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     carregarComunicat();
   }, [editId, navigate, isDemoMode]);
 
+  const llocsFeinaActius = useMemo(
+    () => normalitzarLlocsFeina(formData),
+    [formData.llocsFeina, formData.ruta]
+  );
+
   useEffect(() => {
-    const destination = formData.ruta?.trim() || "";
+    const llocs = llocsFeinaActius;
+    const destination = llocs.join("|");
 
     if (!destination) {
       routeAbortRef.current?.abort();
       lastRouteRequestRef.current = "";
       setRouteCoords([]);
+      setRouteMarkers([]);
       setRouteStatus("idle");
       setRouteErrorMsg("");
       return;
@@ -344,17 +368,18 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     if (destination.length < 4) {
       routeAbortRef.current?.abort();
       setRouteCoords([]);
+      setRouteMarkers([]);
       setRouteStatus("idle");
       setRouteErrorMsg("");
       return;
     }
 
     const timeoutId = setTimeout(() => {
-      fetchRoute(destination);
+      fetchRoute(llocs);
     }, 700);
 
     return () => clearTimeout(timeoutId);
-  }, [formData.ruta]);
+  }, [llocsFeinaActius]);
 
   const getConfigActualitzada = (camp, actualitzat) => ({
     responsables: camp === "responsables" ? actualitzat : responsables,
@@ -406,6 +431,32 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
       [field]: value,
       ...extra,
     }));
+  };
+
+  const sincronitzarLlocsFeina = (llocs) => {
+    setFormData((prev) => ({
+      ...prev,
+      llocsFeina: llocs,
+      ruta: formatLlocsFeina(llocs),
+    }));
+  };
+
+  const actualitzarLlocFeina = (index, value) => {
+    const llocs = formData.llocsFeina?.length ? [...formData.llocsFeina] : [""];
+    llocs[index] = value;
+    sincronitzarLlocsFeina(llocs);
+  };
+
+  const afegirLlocFeina = () => {
+    sincronitzarLlocsFeina([...(formData.llocsFeina?.length ? formData.llocsFeina : [""]), ""]);
+    setLlocSuggerimentsActiu(formData.llocsFeina?.length || 0);
+  };
+
+  const eliminarLlocFeina = (index) => {
+    const llocsActuals = formData.llocsFeina?.length ? formData.llocsFeina : [""];
+    const llocs = llocsActuals.filter((_, i) => i !== index);
+    sincronitzarLlocsFeina(llocs.length ? llocs : [""]);
+    setLlocSuggerimentsActiu(0);
   };
 
   const toggleValorCamp = (camp, valor) => {
@@ -481,7 +532,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
       ? telefonsDestinatarisVisibles.join(", ")
       : formData.telefon;
   const suggerimentsRuta = useMemo(() => {
-    const ruta = formData.ruta?.trim() || "";
+    const ruta = formData.llocsFeina?.[llocSuggerimentsActiu]?.trim() || "";
     if (ruta.length < 2) return [];
 
     const rutaLower = ruta.toLowerCase();
@@ -493,11 +544,12 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     );
 
     return [...new Set([...suggerimentsHabituals, ...variants])].slice(0, 6);
-  }, [formData.ruta]);
+  }, [formData.llocsFeina, llocSuggerimentsActiu]);
 
   const handleReset = () => {
     setFormData(isDemoMode ? getDemoFormData() : emptyFormData);
     setRouteCoords([]);
+    setRouteMarkers([]);
     setRouteStatus("idle");
     setRouteErrorMsg("");
     lastRouteRequestRef.current = "";
@@ -542,6 +594,24 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     });
   };
 
+  const crearComunicatDemoAmbReferencia = async (dadesAmbMapa, yyyymm) => {
+    const id = `demo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const numeroDemo = [...id].reduce(
+      (acc, char) => (acc * 31 + char.charCodeAt(0)) % 10000,
+      0
+    );
+    const referenciaComunicat = formatReferencia(yyyymm, numeroDemo || 1);
+
+    saveDemoComunicatLocal({
+      id,
+      ...dadesAmbMapa,
+      referenciaComunicat,
+      createdAt: new Date().toISOString(),
+    });
+
+    return { id, referenciaComunicat };
+  };
+
   const enviarCorreuComunicat = async (dadesPerCorreu) => {
     if (isDemoMode) {
       console.info("Mode demo: enviament de correu simulat.", dadesPerCorreu);
@@ -571,14 +641,17 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     }
   };
 
-  const fetchRoute = async (destination, { force = false } = {}) => {
-    const destinationTrimmed = destination?.trim() || "";
-    const routeKey = destinationTrimmed.toLowerCase();
+  const fetchRoute = async (destinations, { force = false } = {}) => {
+    const llocs = (Array.isArray(destinations) ? destinations : [destinations])
+      .map((destination) => netejarPaisEspanya(destination))
+      .filter(Boolean);
+    const routeKey = llocs.join("|").toLowerCase();
 
-    if (!destinationTrimmed || destinationTrimmed.length < 4) {
+    if (llocs.length === 0 || routeKey.length < 4) {
       routeAbortRef.current?.abort();
       lastRouteRequestRef.current = "";
       setRouteCoords([]);
+      setRouteMarkers([]);
       setRouteStatus("idle");
       setRouteErrorMsg("");
       return;
@@ -600,92 +673,119 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     setStatusMsg("Carregant ruta...");
 
     try {
-      let polyline = [];
-      let ultimError = null;
-      const variantsRuta = crearVariantsRuta(destinationTrimmed);
+      const puntsValids = [];
+      const llocsFallits = [];
 
-      for (const variant of variantsRuta) {
-        try {
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-              variant
-            )}&format=json&limit=1`,
-            { signal: controller.signal }
-          );
+      for (const lloc of llocs) {
+        const variantsRuta = crearVariantsRuta(lloc);
+        let puntTrobat = null;
+        let ultimError = null;
 
-          if (!res.ok) {
-            throw new Error("No s'han pogut obtenir coordenades del destí.");
-          }
-
-          const data = await res.json();
-
-          if (!Array.isArray(data) || !data.length) {
-            throw new Error(`Sense coordenades per a: ${variant}`);
-          }
-
-          const lon = parseFloat(data[0].lon);
-          const lat = parseFloat(data[0].lat);
-
-          if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
-            throw new Error(`Coordenades no vàlides per a: ${variant}`);
-          }
-
-          const coords = [lon, lat];
-          const routeRes = await fetch(
-            "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
-            {
-              method: "POST",
-              headers: {
-                Authorization: "5b3ce3597851110001cf6248b9be20c2ac9f4960afb9260f5d30097e",
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ coordinates: [[2.89174, 39.4924], coords] }),
-              signal: controller.signal,
-            }
-          );
-
-          if (!routeRes.ok) {
-            throw new Error(`OpenRouteService no ha calculat la variant: ${variant}`);
-          }
-
-          const geojson = await routeRes.json();
-          const coordinates = geojson?.features?.[0]?.geometry?.coordinates;
-
-          if (!Array.isArray(coordinates) || coordinates.length === 0) {
-            throw new Error(`Ruta buida per a: ${variant}`);
-          }
-
-          polyline = coordinates
-            .map((c) => [c[1], c[0]])
-            .filter(([latitud, longitud]) =>
-              Number.isFinite(latitud) && Number.isFinite(longitud)
+        for (const variant of variantsRuta) {
+          try {
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+                variant
+              )}&format=json&limit=1`,
+              { signal: controller.signal }
             );
 
-          if (polyline.length === 0) {
-            throw new Error(`Ruta sense coordenades vàlides per a: ${variant}`);
-          }
+            if (!res.ok) {
+              throw new Error("No s'han pogut obtenir coordenades del lloc de feina.");
+            }
 
-          break;
-        } catch (errorVariant) {
-          if (errorVariant.name === "AbortError") throw errorVariant;
-          ultimError = errorVariant;
-          console.warn("Variant de ruta fallida:", variant, errorVariant.message);
+            const data = await res.json();
+
+            if (!Array.isArray(data) || !data.length) {
+              throw new Error(`Sense coordenades per a: ${variant}`);
+            }
+
+            const lon = parseFloat(data[0].lon);
+            const lat = parseFloat(data[0].lat);
+
+            if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+              throw new Error(`Coordenades no vàlides per a: ${variant}`);
+            }
+
+            puntTrobat = {
+              nom: netejarPaisEspanya(lloc),
+              coords: [lon, lat],
+              position: [lat, lon],
+            };
+            break;
+          } catch (errorVariant) {
+            if (errorVariant.name === "AbortError") throw errorVariant;
+            ultimError = errorVariant;
+            console.warn("Variant de lloc fallida:", variant, errorVariant.message);
+          }
+        }
+
+        if (puntTrobat) {
+          puntsValids.push(puntTrobat);
+        } else {
+          llocsFallits.push(netejarPaisEspanya(lloc));
+          console.warn("No s'ha pogut geocodificar el lloc:", lloc, ultimError?.message);
         }
       }
 
+      if (puntsValids.length === 0) {
+        throw new Error("No s'ha pogut geocodificar cap lloc de feina.");
+      }
+
+      const routeRes = await fetch(
+        "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+        {
+          method: "POST",
+          headers: {
+            Authorization: "5b3ce3597851110001cf6248b9be20c2ac9f4960afb9260f5d30097e",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            coordinates: [[2.89174, 39.4924], ...puntsValids.map((punt) => punt.coords)],
+          }),
+          signal: controller.signal,
+        }
+      );
+
+      if (!routeRes.ok) {
+        throw new Error("OpenRouteService no ha calculat la ruta multipunt.");
+      }
+
+      const geojson = await routeRes.json();
+      const coordinates = geojson?.features?.[0]?.geometry?.coordinates;
+
+      if (!Array.isArray(coordinates) || coordinates.length === 0) {
+        throw new Error("La ruta rebuda és buida o no és vàlida.");
+      }
+
+      const polyline = coordinates
+        .map((c) => [c[1], c[0]])
+        .filter(([latitud, longitud]) =>
+          Number.isFinite(latitud) && Number.isFinite(longitud)
+        );
+
       if (polyline.length === 0) {
-        throw ultimError || new Error("No s'ha pogut calcular cap variant de ruta.");
+        throw new Error("La ruta rebuda no conté coordenades vàlides.");
       }
 
       setRouteCoords(polyline);
+      setRouteMarkers(puntsValids);
       setRouteStatus("success");
       setRouteErrorMsg("");
-      setStatusMsg("Ruta carregada ✅");
+
+      if (llocsFallits.length > 0) {
+        setStatusMsg(
+          `Ruta carregada parcialment. No s'ha pogut localitzar: ${llocsFallits.join(", ")}`
+        );
+      } else {
+        setStatusMsg("Ruta carregada ✅");
+      }
     } catch (err) {
       if (err.name === "AbortError") return;
 
       console.error("Error generant la ruta:", err.message);
       setRouteCoords([]);
+      setRouteMarkers([]);
       setRouteStatus("error");
       setRouteErrorMsg(MISSATGE_RUTA_ERROR);
       setStatusMsg(MISSATGE_RUTA_ERROR);
@@ -766,6 +866,10 @@ const handleSubmit = async (e) => {
     }
 
     const mapaPerCorreu = imgMapa || (rutaAmbError ? generarImatgeMapaNoDisponible() : "");
+    const llocsNormalitzats = normalitzarLlocsFeina(formData);
+    const llocsText = formatLlocsFeina(llocsNormalitzats);
+    const etiquetaLlocs =
+      llocsNormalitzats.length > 1 ? "Llocs de feina" : "Lloc de feina";
 
     const {
       dataBase: dataFormulari,
@@ -780,27 +884,39 @@ const handleSubmit = async (e) => {
       entorn: isDemoMode ? DEMO_ENV : REAL_ENV,
       any: Number(any),
       mes: Number(mes),
+      llocsFeina: llocsNormalitzats,
+      ruta: llocsText,
       mapa: imgMapa,
       rutaCoords: routeStatus === "success" ? convertirRutaPerFirestore(routeCoords) : [],
-      updatedAt: serverTimestamp(),
+      updatedAt: isDemoMode ? new Date().toISOString() : serverTimestamp(),
     };
 
     if (editId) {
-      const refDoc = doc(db, "comunicatsNova", editId);
       const dadesPerActualitzar = { ...dadesAmbMapa };
 
       if (!dadesPerActualitzar.referenciaComunicat) {
         delete dadesPerActualitzar.referenciaComunicat;
       }
 
-      await updateDoc(refDoc, dadesPerActualitzar);
+      if (isDemoMode) {
+        saveDemoComunicatLocal({
+          ...dadesPerActualitzar,
+          id: editId,
+          updatedAt: new Date().toISOString(),
+        });
+      } else {
+        const refDoc = doc(db, "comunicatsNova", editId);
+        await updateDoc(refDoc, dadesPerActualitzar);
+      }
     } else {
-      const resultat = await crearComunicatAmbReferencia(
-        dadesAmbMapa,
-        any,
-        mes,
-        yyyymm
-      );
+      const resultat = isDemoMode
+        ? await crearComunicatDemoAmbReferencia(dadesAmbMapa, yyyymm)
+        : await crearComunicatAmbReferencia(
+            dadesAmbMapa,
+            any,
+            mes,
+            yyyymm
+          );
       dadesAmbMapa.referenciaComunicat = resultat.referenciaComunicat;
     }
 
@@ -810,7 +926,14 @@ const handleSubmit = async (e) => {
       ...dadesAmbMapa,
       updatedAt: new Date().toISOString(),
       referenciaComunicat: referenciaPerCorreu,
-      incidencia: referenciaPerCorreu,
+      assumpte: `Referència: ${referenciaPerCorreu}`,
+      subject: `Referència: ${referenciaPerCorreu}`,
+      titolReferencia: `Referència: ${referenciaPerCorreu}`,
+      llocFeina: llocsNormalitzats[0] || "",
+      llocsFeina: llocsText,
+      llocsFeinaText: llocsText,
+      llocsFeinaLabel: etiquetaLlocs,
+      ruta: llocsText,
       mapa: mapaPerCorreu,
       mapaText: rutaAmbError ? MISSATGE_MAPA_NO_GENERAT : "",
       mapaDisponible: imgMapa ? "sí" : "no",
@@ -1081,41 +1204,76 @@ const handleSubmit = async (e) => {
         </div>
 
         <div className="input-group">
-          <label className="field-label">Ruta a seguir</label>
-          <input
-            type="text"
-            value={formData.ruta}
-            onChange={(e) => {
-              handleChange("ruta", e.target.value);
-              setMostrarSuggerimentsRuta(true);
-            }}
-            onFocus={() => setMostrarSuggerimentsRuta(true)}
-            onBlur={() => {
-              setTimeout(() => setMostrarSuggerimentsRuta(false), 150);
-            }}
-            placeholder="Ruta o destinació"
-            className="form-input"
-            autoComplete="off"
-          />
+          <label className="field-label">Llocs de feina</label>
+          <div className="work-locations-list">
+            {(formData.llocsFeina?.length ? formData.llocsFeina : [""]).map(
+              (lloc, index) => (
+                <div className="work-location-row" key={`lloc-feina-${index}`}>
+                  <div className="work-location-input-wrap">
+                    <label className="field-sublabel">Lloc de feina {index + 1}</label>
+                    <input
+                      type="text"
+                      value={lloc}
+                      onChange={(e) => {
+                        actualitzarLlocFeina(index, e.target.value);
+                        setLlocSuggerimentsActiu(index);
+                        setMostrarSuggerimentsRuta(true);
+                      }}
+                      onFocus={() => {
+                        setLlocSuggerimentsActiu(index);
+                        setMostrarSuggerimentsRuta(true);
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setMostrarSuggerimentsRuta(false), 150);
+                      }}
+                      placeholder="Lloc de feina"
+                      className="form-input"
+                      autoComplete="off"
+                    />
 
-          {mostrarSuggerimentsRuta && suggerimentsRuta.length > 0 && (
-            <div className="route-suggestions">
-              {suggerimentsRuta.map((suggeriment) => (
-                <button
-                  type="button"
-                  key={suggeriment}
-                  className="route-suggestion"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    handleChange("ruta", suggeriment);
-                    setMostrarSuggerimentsRuta(false);
-                  }}
-                >
-                  {suggeriment}
-                </button>
-              ))}
-            </div>
-          )}
+                    {mostrarSuggerimentsRuta &&
+                      llocSuggerimentsActiu === index &&
+                      suggerimentsRuta.length > 0 && (
+                        <div className="route-suggestions">
+                          {suggerimentsRuta.map((suggeriment) => (
+                            <button
+                              type="button"
+                              key={suggeriment}
+                              className="route-suggestion"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => {
+                                actualitzarLlocFeina(index, suggeriment);
+                                setMostrarSuggerimentsRuta(false);
+                              }}
+                            >
+                              {suggeriment}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                  </div>
+
+                  {(formData.llocsFeina?.length || 1) > 1 && (
+                    <button
+                      type="button"
+                      className="button-danger work-location-remove"
+                      onClick={() => eliminarLlocFeina(index)}
+                    >
+                      Eliminar lloc
+                    </button>
+                  )}
+                </div>
+              )
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="button-secondary work-location-add"
+            onClick={afegirLlocFeina}
+          >
+            Afegir lloc de feina
+          </button>
         </div>
 
         <div className="input-group">
@@ -1220,7 +1378,7 @@ const handleSubmit = async (e) => {
             <p className="route-error-text">{routeErrorMsg || MISSATGE_RUTA_ERROR}</p>
             <button
               type="button"
-              onClick={() => fetchRoute(formData.ruta, { force: true })}
+              onClick={() => fetchRoute(llocsFeinaActius, { force: true })}
               className="button-secondary route-retry-button"
               disabled={routeStatus === "loading"}
             >
@@ -1247,6 +1405,20 @@ const handleSubmit = async (e) => {
             >
               <Popup>Sortida: Carrer de Castella, Llucmajor</Popup>
             </Marker>
+
+            {routeMarkers.map((punt, index) => (
+              <Marker
+                key={`${punt.nom}-${index}`}
+                position={punt.position}
+                icon={L.icon({
+                  iconUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png",
+                })}
+              >
+                <Popup>
+                  {index + 1}. {punt.nom}
+                </Popup>
+              </Marker>
+            ))}
 
             {routeCoords.length > 0 && (
               <Polyline
