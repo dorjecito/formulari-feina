@@ -1,0 +1,64 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isDemoUser() {
+      return signedIn() &&
+        request.auth.token.email == "convidat.demo@example.com";
+    }
+
+    function isDemoData(data) {
+      return data.entorn == "demo";
+    }
+
+    function isRealData(data) {
+      return !("entorn" in data) || data.entorn == "real";
+    }
+
+    match /comunicatsNova/{comunicatId} {
+      allow read: if signedIn() &&
+        (
+          !isDemoUser() ||
+          (isDemoUser() && isDemoData(resource.data))
+        );
+
+      allow create: if signedIn() &&
+        (
+          (isDemoUser() && isDemoData(request.resource.data)) ||
+          (!isDemoUser() && request.resource.data.entorn == "real")
+        );
+
+      allow update: if signedIn() &&
+        (
+          (isDemoUser() && isDemoData(resource.data) && isDemoData(request.resource.data)) ||
+          (!isDemoUser() && isRealData(resource.data) && request.resource.data.entorn == "real")
+        );
+
+      allow delete: if signedIn() &&
+        (
+          (isDemoUser() && isDemoData(resource.data)) ||
+          (!isDemoUser() && isRealData(resource.data))
+        );
+    }
+
+    match /configuracio_formulari/{documentId} {
+      allow read, write: if signedIn() && !isDemoUser();
+    }
+
+    match /comptadorsComunicats/{documentId} {
+      allow read, write: if signedIn() && !isDemoUser();
+    }
+
+    match /comptadorsComunicatsDemo/{documentId} {
+      allow read, write: if isDemoUser();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

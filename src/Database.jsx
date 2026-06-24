@@ -12,8 +12,9 @@ import {
 import { db } from "./firebase";
 import { Link, useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
+import { DEMO_ENV, isDemoComunicat, isRealComunicat } from "./demo";
 
-export default function Database() {
+export default function Database({ isDemoMode = false }) {
   const avui = new Date();
   const anyActual = avui.getFullYear();
   const mesActual = avui.getMonth() + 1;
@@ -48,11 +49,11 @@ export default function Database() {
 
   useEffect(() => {
     fetchComunicats();
-  }, [filtreAny, filtreMes]);
+  }, [filtreAny, filtreMes, isDemoMode]);
 
   useEffect(() => {
     fetchTotsElsComunicats();
-  }, []);
+  }, [isDemoMode]);
 
   useEffect(() => {
     setPaginaActual(1);
@@ -84,6 +85,23 @@ export default function Database() {
     return Array.from(comunicatsPerId.values());
   };
 
+  const filtrarPerEntorn = (dades) =>
+    dades.filter((comunicat) =>
+      isDemoMode ? isDemoComunicat(comunicat) : isRealComunicat(comunicat)
+    );
+
+  const filtrarPerAnyMes = (dades) =>
+    dades.filter((comunicat) => {
+      const anyValors = valorsFiltreAny(filtreAny);
+      const mesValors = valorsFiltreMes(filtreMes);
+      const coincideixAny =
+        !filtreAny || anyValors.some((valor) => String(valor) === String(comunicat.any));
+      const coincideixMes =
+        !filtreMes || mesValors.some((valor) => String(valor) === String(comunicat.mes));
+
+      return coincideixAny && coincideixMes;
+    });
+
   const fetchComunicats = async () => {
     setLoading(true);
 
@@ -91,7 +109,9 @@ export default function Database() {
       const ref = collection(db, "comunicatsNova");
       let consultes = [ref];
 
-      if (filtreAny && filtreMes) {
+      if (isDemoMode) {
+        consultes = [query(ref, where("entorn", "==", DEMO_ENV))];
+      } else if (filtreAny && filtreMes) {
         consultes = valorsFiltreAny(filtreAny).flatMap((valorAny) =>
           valorsFiltreMes(filtreMes).map((valorMes) =>
             query(
@@ -111,7 +131,8 @@ export default function Database() {
         );
       }
 
-      const dades = (await carregarConsultesCompatibles(consultes)).sort((a, b) =>
+      const dadesBase = await carregarConsultesCompatibles(consultes);
+      const dades = filtrarPerAnyMes(filtrarPerEntorn(dadesBase)).sort((a, b) =>
         (b.data || "").localeCompare(a.data || "")
       );
 
@@ -126,13 +147,19 @@ export default function Database() {
 
   const fetchTotsElsComunicats = async () => {
     try {
-      const querySnapshot = await getDocs(collection(db, "comunicatsNova"));
+      const ref = collection(db, "comunicatsNova");
+      const querySnapshot = await getDocs(
+        isDemoMode ? query(ref, where("entorn", "==", DEMO_ENV)) : ref
+      );
 
       const dades = querySnapshot.docs
         .map((docSnap) => ({
           id: docSnap.id,
           ...docSnap.data(),
         }))
+        .filter((comunicat) =>
+          isDemoMode ? isDemoComunicat(comunicat) : isRealComunicat(comunicat)
+        )
         .sort((a, b) => (b.data || "").localeCompare(a.data || ""));
 
       setTotsElsComunicats(dades);
@@ -142,7 +169,17 @@ export default function Database() {
     }
   };
 
-  const eliminarComunicat = async (id) => {
+  const eliminarComunicat = async (comunicat) => {
+    if (
+      (isDemoMode && !isDemoComunicat(comunicat)) ||
+      (!isDemoMode && !isRealComunicat(comunicat))
+    ) {
+      alert("❌ No tens permisos per eliminar aquest comunicat.");
+      return;
+    }
+
+    const id = comunicat.id;
+
     if (window.confirm("Vols eliminar aquest comunicat? Aquesta acció no es pot desfer.")) {
       await deleteDoc(doc(db, "comunicatsNova", id));
 
@@ -244,7 +281,13 @@ export default function Database() {
   const descarregarPDF = (comunicat) => {
     const docu = new jsPDF();
     docu.setFontSize(14);
-    docu.text("Vista de comunicat", 14, 20);
+    docu.text(isDemoMode ? "Vista de comunicat demo" : "Vista de comunicat", 14, 20);
+
+    if (isDemoMode) {
+      docu.setFontSize(11);
+      docu.text("ENTORN DE DEMOSTRACIÓ · DADES FICTÍCIES", 14, 27);
+      docu.setFontSize(14);
+    }
 
     const linies = [
       `Referència: ${referenciaVisible(comunicat)}`,
@@ -261,7 +304,7 @@ export default function Database() {
       `Observacions: ${formatValue(comunicat.observacions)}`,
     ];
 
-    linies.forEach((t, i) => docu.text(t, 14, 30 + i * 10));
+    linies.forEach((t, i) => docu.text(t, 14, (isDemoMode ? 37 : 30) + i * 10));
     docu.save(`comunicat_${comunicat.data || "sense_data"}.pdf`);
   };
 
@@ -344,8 +387,14 @@ export default function Database() {
           marginBottom: "20px",
         }}
       >
-        🗂️ Base de Dades de Comunicats
+        🗂️ {isDemoMode ? "Base de Dades Demo de Comunicats" : "Base de Dades de Comunicats"}
       </h2>
+
+      {isDemoMode && (
+        <div className="demo-banner" style={{ maxWidth: "720px", margin: "0 auto 16px" }}>
+          ENTORN DE DEMOSTRACIÓ · DADES FICTÍCIES
+        </div>
+      )}
 
       <div style={{ textAlign: "center", marginBottom: "20px" }}>
         <Link to="/home">
@@ -686,7 +735,7 @@ export default function Database() {
                   <br />
 
                   <button
-                    onClick={() => eliminarComunicat(c.id)}
+                    onClick={() => eliminarComunicat(c)}
                     style={{
                       backgroundColor: "#E53E3E",
                       color: "white",
@@ -771,11 +820,19 @@ export default function Database() {
           }}
         >
           <h2 style={{ textAlign: "center", marginBottom: "10px" }}>
-            Vista prèvia del comunicat seleccionat
+            {isDemoMode
+              ? "Vista prèvia del comunicat demo seleccionat"
+              : "Vista prèvia del comunicat seleccionat"}
           </h2>
 
+          {isDemoMode && (
+            <div className="demo-banner" style={{ marginBottom: "12px" }}>
+              ENTORN DE DEMOSTRACIÓ · DADES FICTÍCIES
+            </div>
+          )}
+
           <h3 style={{ textAlign: "center", marginBottom: "20px" }}>
-            Vista prèvia de comunicat
+            {isDemoMode ? "Vista prèvia de comunicat demo" : "Vista prèvia de comunicat"}
           </h3>
 
           <p><strong>Data:</strong> {formatValue(comunicatSeleccionat.data)}</p>

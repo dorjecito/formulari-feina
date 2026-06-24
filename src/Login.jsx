@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { auth } from "./firebase";
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { useNavigate } from "react-router-dom";
+import { DEMO_SESSION_KEY, isDemoLogin, normalizeLoginIdentifier } from "./demo";
 
 function Login() {
   const [email, setEmail] = useState("");
@@ -14,8 +15,15 @@ function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    const demoLogin = isDemoLogin(email, password);
+
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, normalizeLoginIdentifier(email), password);
+      if (demoLogin) {
+        localStorage.setItem(DEMO_SESSION_KEY, "true");
+      } else {
+        localStorage.removeItem(DEMO_SESSION_KEY);
+      }
       navigate("/home");
     } catch (err) {
       alert("Error d'inici de sessió: usuari o contrasenya incorrectes.");
@@ -55,7 +63,7 @@ function Login() {
 
       {!showResetForm ? (
         <>
-          <form onSubmit={handleLogin} style={{
+          <form onSubmit={handleLogin} noValidate style={{
             background: "white",
             padding: "30px",
             borderRadius: "8px",
@@ -67,10 +75,10 @@ function Login() {
             gap: "15px"
           }}>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="Correu electrònic"
+              placeholder="Usuari o correu electrònic"
               required
               style={{ padding: "10px", borderRadius: "6px", border: "1px solid #ccc" }}
             />

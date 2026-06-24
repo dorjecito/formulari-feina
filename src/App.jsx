@@ -8,6 +8,7 @@ import Login from "./Login";
 import Home from "./Home";
 import Database from "./Database";
 import AppFinalFormulari from "./AppFinalFormulari";
+import { DEMO_SESSION_KEY, isDemoUser } from "./demo";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -27,6 +28,8 @@ function App() {
   if (loading) return <p>Carregant...</p>;
 
   console.log("Usuari logat?", user);
+  const isDemoMode =
+    isDemoUser(user) || localStorage.getItem(DEMO_SESSION_KEY) === "true";
 
   return (
     <Router>
@@ -38,17 +41,17 @@ function App() {
 
         <Route
           path="/home"
-          element={user ? <Home /> : <Navigate to="/" />}
+          element={user ? <Home isDemoMode={isDemoMode} /> : <Navigate to="/" />}
         />
 
         <Route
           path="/database"
-          element={user ? <Database /> : <Navigate to="/" />}
+          element={user ? <Database isDemoMode={isDemoMode} /> : <Navigate to="/" />}
         />
 
         <Route
           path="/editar/:id"
-          element={user ? <AppFinalFormulari /> : <Navigate to="/" />}
+          element={user ? <AppFinalFormulari isDemoMode={isDemoMode} /> : <Navigate to="/" />}
         />
       </Routes>
     </Router>

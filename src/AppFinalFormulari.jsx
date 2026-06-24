@@ -18,6 +18,14 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import {
+  DEMO_ENV,
+  REAL_ENV,
+  DEMO_CONFIG,
+  applyDemoConfig,
+  isDemoComunicat,
+  isRealComunicat,
+} from "./demo";
 import ImpressioComunicat from "./ImpressioComunicat";
 
 const center = [39.4924, 2.89174]; // Carrer de Castella, Llucmajor
@@ -119,7 +127,20 @@ const crearVariantsRuta = (ruta) => {
   return [...new Set(variants.map((variant) => variant.trim()).filter(Boolean))];
 };
 
-export default function AppFinalFormulari({ topActions = null }) {
+const getDemoFormData = () => ({
+  ...emptyFormData,
+  responsableBrigada: ["Usuari Demo"],
+  oficialResponsable: ["Oficial Demo"],
+  oficial: ["Treballador 1"],
+  peo: ["Operari Demo"],
+  eines: ["Equip Demo"],
+  matricula: ["TEST001"],
+  feines: ["Tasca de demostració"],
+  to_email: DEMO_CONFIG.oficialsEmails["Oficial Demo"],
+  telefon: DEMO_CONFIG.oficialsTelefons["Oficial Demo"],
+});
+
+export default function AppFinalFormulari({ topActions = null, isDemoMode = false }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const editId = id || null;
@@ -148,6 +169,21 @@ export default function AppFinalFormulari({ topActions = null }) {
   const routeAbortRef = useRef(null);
 
   const carregarConfiguracio = async () => {
+    if (isDemoMode) {
+      applyDemoConfig({
+        setResponsables,
+        setOficialsResponsables,
+        setOficials,
+        setPeons,
+        setEines,
+        setMatricules,
+        setTasques,
+        setOficialsEmails,
+        setOficialsTelefons,
+      });
+      return;
+    }
+
     try {
       const docRef = doc(db, "configuracio_formulari", "default");
       const docSnap = await getDoc(docRef);
@@ -182,6 +218,8 @@ export default function AppFinalFormulari({ topActions = null }) {
   };
 
   const actualitzarConfiguracio = async (dataActualitzada) => {
+    if (isDemoMode) return;
+
     try {
       const docRef = doc(db, "configuracio_formulari", "default");
       await setDoc(docRef, dataActualitzada);
@@ -192,7 +230,13 @@ export default function AppFinalFormulari({ topActions = null }) {
 
   useEffect(() => {
     carregarConfiguracio();
-  }, []);
+  }, [isDemoMode]);
+
+  useEffect(() => {
+    if (!isDemoMode || editId) return;
+
+    setFormData(getDemoFormData());
+  }, [isDemoMode, editId]);
 
   useEffect(() => {
     const carregarComunicat = async () => {
@@ -209,6 +253,15 @@ export default function AppFinalFormulari({ topActions = null }) {
         }
 
         const data = docSnap.data();
+
+        if (
+          (isDemoMode && !isDemoComunicat(data)) ||
+          (!isDemoMode && !isRealComunicat(data))
+        ) {
+          alert("❌ No tens permisos per editar aquest comunicat.");
+          navigate("/database");
+          return;
+        }
 
         const normalitzat = {
           data: data.data || "",
@@ -274,7 +327,7 @@ export default function AppFinalFormulari({ topActions = null }) {
     };
 
     carregarComunicat();
-  }, [editId, navigate]);
+  }, [editId, navigate, isDemoMode]);
 
   useEffect(() => {
     const destination = formData.ruta?.trim() || "";
@@ -443,7 +496,7 @@ export default function AppFinalFormulari({ topActions = null }) {
   }, [formData.ruta]);
 
   const handleReset = () => {
-    setFormData(emptyFormData);
+    setFormData(isDemoMode ? getDemoFormData() : emptyFormData);
     setRouteCoords([]);
     setRouteStatus("idle");
     setRouteErrorMsg("");
@@ -454,7 +507,11 @@ export default function AppFinalFormulari({ topActions = null }) {
 
   const crearComunicatAmbReferencia = async (dadesAmbMapa, any, mes, yyyymm) => {
     return runTransaction(db, async (transaction) => {
-      const counterRef = doc(db, "comptadorsComunicats", yyyymm);
+      const counterRef = doc(
+        db,
+        isDemoMode ? "comptadorsComunicatsDemo" : "comptadorsComunicats",
+        yyyymm
+      );
       const nouComunicatRef = doc(collection(db, "comunicatsNova"));
       const counterSnap = await transaction.get(counterRef);
 
@@ -486,6 +543,12 @@ export default function AppFinalFormulari({ topActions = null }) {
   };
 
   const enviarCorreuComunicat = async (dadesPerCorreu) => {
+    if (isDemoMode) {
+      console.info("Mode demo: enviament de correu simulat.", dadesPerCorreu);
+      setStatusMsg("Simulació d'enviament realitzada.");
+      return;
+    }
+
     const emailsResponsables = obtenirEmailsOficialsResponsables();
     const destinataris = emailsResponsables.length > 0
       ? emailsResponsables
@@ -714,6 +777,7 @@ const handleSubmit = async (e) => {
     const dadesAmbMapa = {
       ...formData,
       data: dataFormulari,
+      entorn: isDemoMode ? DEMO_ENV : REAL_ENV,
       any: Number(any),
       mes: Number(mes),
       mapa: imgMapa,
@@ -778,7 +842,11 @@ const handleSubmit = async (e) => {
     }
 
     alert(
-      editId && !haDeReenviar
+      isDemoMode
+        ? haDeReenviar
+          ? "✅ Comunicat demo desat. Simulació d'enviament realitzada."
+          : "✅ Comunicat demo actualitzat correctament!"
+        : editId && !haDeReenviar
         ? "✅ Comunicat actualitzat correctament!"
         : "✅ Formulari enviat i desat correctament!"
     );
@@ -868,19 +936,32 @@ const handleSubmit = async (e) => {
   return (
     <div className="app-container">
       <div className="form-header">
-        <div className="logo-frame">
-        <img
-          src="/ajuntament.png"
-          alt="Logo"
-          className="app-logo"
-        />
-        </div>
+        {isDemoMode ? (
+          <div className="demo-logo">DEMO</div>
+        ) : (
+          <div className="logo-frame">
+            <img
+              src="/ajuntament.png"
+              alt="Logo"
+              className="app-logo"
+            />
+          </div>
+        )}
 
       <h1>
-        {editId
+        {isDemoMode
+          ? editId
+            ? "Editar comunicat demo · Brigada Test"
+            : "Comunicat demo · Brigada Test"
+          : editId
           ? "Editar comunicat de feina · Brigada de jardineria"
           : "Comunicat de feina · Brigada de jardineria"}
       </h1>
+      {isDemoMode && (
+        <div className="demo-banner">
+          ENTORN DE DEMOSTRACIÓ · DADES FICTÍCIES
+        </div>
+      )}
       {topActions && <div className="top-nav-actions">{topActions}</div>}
       </div>
 
@@ -1180,6 +1261,7 @@ const handleSubmit = async (e) => {
       <ImpressioComunicat
         comunicat={formData}
         mapaRef={mapRef}
+        isDemoMode={isDemoMode}
         mapaNoDisponible={routeStatus === "error"}
         missatgeMapaNoDisponible={MISSATGE_MAPA_NO_GENERAT}
         onPrintReady={(handlePrint) => {

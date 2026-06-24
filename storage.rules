@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isDemoUser() {
+      return signedIn() &&
+        request.auth.token.email == "convidat.demo@example.com";
+    }
+
+    match /demo/{allPaths=**} {
+      allow read, write: if isDemoUser();
+    }
+
+    match /real/{allPaths=**} {
+      allow read, write: if signedIn() && !isDemoUser();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

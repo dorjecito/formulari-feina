@@ -4,6 +4,7 @@ import html2canvas from 'html2canvas';
 export default function ImpressioComunicat({
  comunicat,
  mapaRef,
+ isDemoMode = false,
  mapaNoDisponible = false,
  missatgeMapaNoDisponible = "No s'ha pogut generar el mapa de la ruta. El comunicat és igualment vàlid.",
  onPrintReady,
@@ -42,9 +43,41 @@ export default function ImpressioComunicat({
    <div className="print-wrapper">
      <div className="comunicat-impressio" ref={printRef} style={{ padding: '20px', fontFamily: 'sans-serif' }}>
        <div style={{ textAlign: 'center' }}>
-         <img src="/ajuntament.png" alt="Logo Ajuntament" style={{ height: '60px', marginBottom: '10px' }} />
-         <h1>Comunicat de feina</h1>
-         <h2 style={{ fontSize: '1.4rem', fontWeight: 'bold', marginTop: '5px' }}>Brigada de jardineria</h2>
+         {isDemoMode ? (
+           <div style={{
+             display: 'inline-flex',
+             alignItems: 'center',
+             justifyContent: 'center',
+             height: '60px',
+             minWidth: '140px',
+             marginBottom: '10px',
+             border: '2px solid #334155',
+             borderRadius: '8px',
+             fontWeight: 'bold',
+             letterSpacing: '1px'
+           }}>
+             DEMO
+           </div>
+         ) : (
+           <img src="/ajuntament.png" alt="Logo Ajuntament" style={{ height: '60px', marginBottom: '10px' }} />
+         )}
+         <h1>{isDemoMode ? 'Comunicat demo' : 'Comunicat de feina'}</h1>
+         <h2 style={{ fontSize: '1.4rem', fontWeight: 'bold', marginTop: '5px' }}>
+           {isDemoMode ? 'Brigada Test' : 'Brigada de jardineria'}
+         </h2>
+         {isDemoMode && (
+           <div style={{
+             margin: '12px auto',
+             padding: '8px 12px',
+             border: '1px solid #f59e0b',
+             backgroundColor: '#fffbeb',
+             color: '#92400e',
+             fontWeight: 'bold',
+             borderRadius: '6px'
+           }}>
+             ENTORN DE DEMOSTRACIÓ · DADES FICTÍCIES
+           </div>
+         )}
        </div>
 
        <p><strong>Email:</strong> {comunicat.email}</p>
