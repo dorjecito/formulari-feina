@@ -82,8 +82,8 @@ export default function Database({ isDemoMode = false }) {
     resultats.forEach((querySnapshot) => {
       querySnapshot.docs.forEach((docSnap) => {
         comunicatsPerId.set(docSnap.id, {
-          id: docSnap.id,
           ...docSnap.data(),
+          id: docSnap.id,
         });
       });
     });
@@ -173,8 +173,8 @@ export default function Database({ isDemoMode = false }) {
 
       const dades = querySnapshot.docs
         .map((docSnap) => ({
-          id: docSnap.id,
           ...docSnap.data(),
+          id: docSnap.id,
         }))
         .filter((comunicat) => {
           if (comunicat.deleted) return false;
@@ -725,7 +725,11 @@ export default function Database({ isDemoMode = false }) {
             {comunicatsPagina.map((c, i) => (
               <tr key={c.id} style={{ backgroundColor: i % 2 === 0 ? "#f9f9f9" : "#fff" }}>
                 <td style={celda}>{formatValue(c.data)}</td>
-                <td style={celda}>{referenciaVisible(c)}</td>
+                <td style={celda}>{referenciaVisible(c)}
+                  {c.duplicatDeId && c.duplicatDeReferencia && <small style={{ display: "block", color: "#64748b" }}>
+                    Continuació de {c.duplicatDeReferencia}
+                  </small>}
+                </td>
                 <td style={celda}>{formatValue(c.responsableBrigada)}</td>
                 <td style={celda}>{formatValue(c.oficialResponsable)}</td>
                 <td style={celda}>{formatValue(c.oficial)}</td>
@@ -775,8 +779,13 @@ export default function Database({ isDemoMode = false }) {
 
                   <br />
 
-                  <button
-                    onClick={() => eliminarComunicat(c)}
+                  <button type="button" onClick={() => navigate(`/duplicar/${c.id}`)}
+                    title="Duplicar comunicat" className="button-secondary" style={{ marginBottom: "6px" }}>
+                    Duplicar comunicat
+                  </button>
+                  <br />
+                  <button
+                    onClick={() => eliminarComunicat(c)}
                     style={{
                       backgroundColor: "#E53E3E",
                       color: "white",

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import "leaflet/dist/leaflet.css";
 import "./App.css";
 import L from "leaflet";
@@ -36,6 +36,26 @@ import {
 import ImpressioComunicat from "./ImpressioComunicat";
 
 const center = [39.4924, 2.89174]; // Carrer de Castella, Llucmajor
+const ROUTE_PROFILE = "driving-car";
+const clauRuta = (llocs) => JSON.stringify({
+  origen: center,
+  perfil: ROUTE_PROFILE,
+  llocs: llocs.map((lloc) => netejarPaisEspanya(lloc).toLowerCase()),
+});
+const dataMadrid = (instant = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(instant);
+  const valor = (tipus) => parts.find((part) => part.type === tipus).value;
+  return `${valor("year")}-${valor("month")}-${valor("day")}`;
+};
+const coordenadaValida = (punt) => punt && Number.isFinite(punt.lat) &&
+  Number.isFinite(punt.lng) && Math.abs(punt.lat) <= 90 && Math.abs(punt.lng) <= 180;
+const rutaReutilitzable = (dades, llocs) => llocs.length > 0 &&
+  dades.rutaClau === clauRuta(llocs) && dades.rutaCompleta === true &&
+  Array.isArray(dades.rutaCoords) && dades.rutaCoords.length >= 2 &&
+  dades.rutaCoords.every(coordenadaValida);
+const separarEmails = (valor = "") => [...new Set(valor.split(/[;,\s]+/).filter(Boolean))];
 
 const emptyFormData = {
   data: "",
@@ -77,7 +97,7 @@ const convertirRutaDesDeFirestore = (coords) => {
 };
 
 const obtenirAnyMesReferencia = (dataFormulari) => {
-  const dataBase = dataFormulari || new Date().toISOString().split("T")[0];
+  const dataBase = dataFormulari || dataMadrid();
   const [any, mes] = dataBase.split("-");
   return {
     dataBase,
@@ -151,9 +171,24 @@ const getDemoFormData = () => ({
 });
 
 export default function AppFinalFormulari({ topActions = null, isDemoMode = false }) {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const editId = id || null;
+  const { id, origenId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const mode = origenId ? "duplicar" : id ? "editar" : "crear";
+  const editId = mode === "editar" ? id : null;
+  const sourceId = editId || origenId;
+  const [carregant, setCarregant] = useState(Boolean(sourceId));
+  const [configCarregada, setConfigCarregada] = useState(false);
+  const [errorCarrega, setErrorCarrega] = useState(false);
+  const [correuPendent, setCorreuPendent] = useState(false);
+  const [contactesAntics, setContactesAntics] = useState(null);
+  const [opcionsHeretades, setOpcionsHeretades] = useState({});
+  const contactesInicialitzatsRef = useRef(false);
+  const submitLockRef = useRef(false);
+  const savedResultRef = useRef(null);
+  const pendingEmailRef = useRef(null);
+  const sentEmailsRef = useRef(new Set());
+  const routeCompleteRef = useRef(false);
 
   const [formData, setFormData] = useState(emptyFormData);
   const [statusMsg, setStatusMsg] = useState("");
@@ -180,7 +215,17 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
   const lastRouteRequestRef = useRef("");
   const routeAbortRef = useRef(null);
 
-  const carregarConfiguracio = async () => {
+  const invalidarRuta = () => {
+    routeAbortRef.current?.abort();
+    lastRouteRequestRef.current = "";
+    routeCompleteRef.current = false;
+    setRouteCoords([]);
+    setRouteMarkers([]);
+    setRouteStatus("idle");
+    setRouteErrorMsg("");
+  };
+
+  const carregarConfiguracio = async () => {
     if (isDemoMode) {
       applyDemoConfig({
         setResponsables,
@@ -192,12 +237,13 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
         setTasques,
         setOficialsEmails,
         setOficialsTelefons,
-      });
-      return;
-    }
+      });
+      setConfigCarregada(true);
+      return;
+    }
 
-    try {
-      const docRef = doc(db, "configuracio_formulari", "default");
+    try {
+      const docRef = doc(db, "configuracio_formulari", "default");
       const docSnap = await getDoc(docRef);
 
       if (docSnap.exists()) {
@@ -211,8 +257,8 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
         setTasques(data.tasques || []);
         setOficialsEmails(data.oficialsEmails || {});
         setOficialsTelefons(data.oficialsTelefons || {});
-      } else {
-        await setDoc(docRef, {
+      } else if (mode !== "duplicar") {
+        await setDoc(docRef, {
           responsables: [],
           oficialsResponsables: [],
           oficials: [],
@@ -226,7 +272,9 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
       }
     } catch (error) {
       console.error("Error carregant configuració:", error);
-    }
+    } finally {
+      setConfigCarregada(true);
+    }
   };
 
   const actualitzarConfiguracio = async (dataActualitzada) => {
@@ -245,26 +293,39 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
   }, [isDemoMode]);
 
   useEffect(() => {
-    if (!isDemoMode || editId) return;
+    if (!isDemoMode || sourceId) return;
 
     setFormData(getDemoFormData());
-  }, [isDemoMode, editId]);
+  }, [isDemoMode, sourceId]);
 
-  useEffect(() => {
-    const carregarComunicat = async () => {
-      if (!editId) return;
+  useEffect(() => {
+    let actiu = true;
+    setCarregant(Boolean(sourceId));
+    setErrorCarrega(false);
+    contactesInicialitzatsRef.current = false;
+    setContactesAntics(null);
+    setOpcionsHeretades({});
+    savedResultRef.current = null;
+    pendingEmailRef.current = null;
+    sentEmailsRef.current.clear();
+    setCorreuPendent(false);
+    invalidarRuta();
+    const carregarComunicat = async () => {
+      if (!sourceId) return;
 
-      try {
+      try {
         const data = isDemoMode
-          ? getDemoComunicatLocal(editId)
+          ? getDemoComunicatLocal(sourceId)
           : await (async () => {
-              const docRef = doc(db, "comunicatsNova", editId);
+              const docRef = doc(db, "comunicatsNova", sourceId);
               const docSnap = await getDoc(docRef);
               return docSnap.exists() ? docSnap.data() : null;
             })();
 
-        if (!data) {
-          alert("❌ El comunicat no existeix.");
+        if (!actiu) return;
+        if (!data || data.deleted) {
+          setErrorCarrega(true);
+          alert("❌ El comunicat no existeix.");
           navigate("/database");
           return;
         }
@@ -273,48 +334,49 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
           (isDemoMode && !isDemoComunicat(data)) ||
           (!isDemoMode && !isRealComunicat(data))
         ) {
-          alert("❌ No tens permisos per editar aquest comunicat.");
+          setErrorCarrega(true);
+          alert("❌ No tens permisos per accedir a aquest comunicat.");
           navigate("/database");
           return;
         }
 
         const llocsNormalitzats = normalitzarLlocsFeina(data);
         const normalitzat = {
-          data: data.data || "",
+          data: mode === "duplicar" ? dataMadrid() : data.data || "",
           responsableBrigada: Array.isArray(data.responsableBrigada)
-            ? data.responsableBrigada
+            ? [...data.responsableBrigada]
             : data.responsableBrigada
             ? [data.responsableBrigada]
             : [],
           oficialResponsable: Array.isArray(data.oficialResponsable)
-            ? data.oficialResponsable
+            ? [...data.oficialResponsable]
             : data.oficialResponsable
             ? [data.oficialResponsable]
             : [],
           oficial: Array.isArray(data.oficial)
-            ? data.oficial
+            ? [...data.oficial]
             : data.oficial
             ? [data.oficial]
             : [],
           peo: Array.isArray(data.peo)
-            ? data.peo
+            ? [...data.peo]
             : data.peo
             ? [data.peo]
             : [],
-          referenciaComunicat: data.referenciaComunicat || "",
-          incidencia: data.incidencia || "",
+          referenciaComunicat: mode === "duplicar" ? "" : data.referenciaComunicat || "",
+          incidencia: mode === "duplicar" ? "" : data.incidencia || "",
           eines: Array.isArray(data.eines)
-            ? data.eines
+            ? [...data.eines]
             : data.eines
             ? [data.eines]
             : [],
           matricula: Array.isArray(data.matricula)
-            ? data.matricula
+            ? [...data.matricula]
             : data.matricula
             ? [data.matricula]
             : [],
           feines: Array.isArray(data.feines)
-            ? data.feines
+            ? [...data.feines]
             : data.feines
             ? [data.feines]
             : [],
@@ -324,27 +386,72 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
           to_email: data.to_email || "",
           telefon: data.telefon || "",
           reply_to: data.reply_to || "",
-        };
+          ...(mode === "duplicar" ? {
+            duplicatDeId: origenId,
+            duplicatDeReferencia: referenciaVisible(data),
+          } : {
+            ...(data.duplicatDeId ? { duplicatDeId: data.duplicatDeId } : {}),
+            ...(data.duplicatDeReferencia ? { duplicatDeReferencia: data.duplicatDeReferencia } : {}),
+            ...(data.createdAt ? { createdAt: data.createdAt } : {}),
+          }),
+        };
 
-        setFormData(normalitzat);
+        setFormData(normalitzat);
+        setOpcionsHeretades(Object.fromEntries(
+          ["responsableBrigada", "oficialResponsable", "oficial", "peo", "eines", "matricula", "feines"]
+            .map((camp) => [camp, [...normalitzat[camp]]])
+        ));
 
-        if (Array.isArray(data.rutaCoords) && data.rutaCoords.length > 0) {
-          setRouteCoords(convertirRutaDesDeFirestore(data.rutaCoords));
-          lastRouteRequestRef.current = llocsNormalitzats.join("|").trim().toLowerCase();
+        if (mode === "duplicar") {
+          setContactesAntics({ to_email: data.to_email || "", telefon: data.telefon || "" });
+        }
+        if (rutaReutilitzable(data, llocsNormalitzats)) {
+          setRouteCoords(convertirRutaDesDeFirestore(data.rutaCoords));
+          lastRouteRequestRef.current = clauRuta(llocsNormalitzats);
+          routeCompleteRef.current = true;
           setRouteStatus("success");
           setRouteErrorMsg("");
           setStatusMsg("Ruta carregada desada ✅");
         }
 
-        setStatusMsg("Comunicat carregat per editar ✏️");
-      } catch (error) {
-        console.error("Error carregant comunicat:", error);
-        alert("❌ Error carregant el comunicat.");
-      }
-    };
+        const pendent = location.state?.correuPendent;
+        if (editId && pendent?.id === editId && pendent.entorn === (isDemoMode ? DEMO_ENV : REAL_ENV)) {
+          savedResultRef.current = { id: editId, referenciaComunicat: referenciaVisible(data) };
+          pendingEmailRef.current = { dades: pendent.dades, destinataris: pendent.destinataris };
+          sentEmailsRef.current = new Set(pendent.enviats || []);
+          setCorreuPendent(true);
+          setStatusMsg(`Comunicat ${referenciaVisible(data)} desat. Queda pendent l'enviament del correu.`);
+        } else {
+          setStatusMsg(mode === "duplicar" ? "Revisa la continuació abans de desar-la." : "Comunicat carregat per editar ✏️");
+        }
+      } catch (error) {
+        if (!actiu) return;
+        setErrorCarrega(true);
+        console.error("Error carregant comunicat:", error);
+        alert("❌ Error carregant el comunicat. Torna a l'històric i prova-ho de nou.");
+      } finally {
+        if (actiu) setCarregant(false);
+      }
+    };
 
-    carregarComunicat();
-  }, [editId, navigate, isDemoMode]);
+    carregarComunicat();
+    return () => { actiu = false; routeAbortRef.current?.abort(); };
+  }, [sourceId, mode, navigate, isDemoMode]);
+
+  useEffect(() => {
+    if (mode !== "duplicar" || carregant || !configCarregada || !contactesAntics ||
+        contactesInicialitzatsRef.current) return;
+    contactesInicialitzatsRef.current = true;
+    setFormData((prev) => {
+      const seleccionats = prev.oficialResponsable;
+      const emails = seleccionats.map((nom) => oficialsEmails[nom]).filter(Boolean);
+      const telefons = seleccionats.map((nom) => oficialsTelefons[nom]).filter(Boolean);
+      return { ...prev,
+        to_email: [...new Set(emails)].join(", ") || prev.to_email,
+        telefon: [...new Set(telefons)].join(", ") || prev.telefon,
+      };
+    });
+  }, [mode, carregant, configCarregada, contactesAntics, oficialsEmails, oficialsTelefons]);
 
   const llocsFeinaActius = useMemo(
     () => normalitzarLlocsFeina(formData),
@@ -352,8 +459,9 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
   );
 
   useEffect(() => {
-    const llocs = llocsFeinaActius;
-    const destination = llocs.join("|");
+    if (carregant || errorCarrega || correuPendent) return;
+    const llocs = llocsFeinaActius;
+    const destination = llocs.join("|");
 
     if (!destination) {
       routeAbortRef.current?.abort();
@@ -379,7 +487,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     }, 700);
 
     return () => clearTimeout(timeoutId);
-  }, [llocsFeinaActius]);
+  }, [llocsFeinaActius, carregant, errorCarrega, correuPendent]);
 
   const getConfigActualitzada = (camp, actualitzat) => ({
     responsables: camp === "responsables" ? actualitzat : responsables,
@@ -420,10 +528,13 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     if (field === "oficialResponsable") {
       const seleccionats = Array.isArray(value) ? value : value ? [value] : [];
       const primerSeleccionat = seleccionats[0] || "";
-      extra = {
-        to_email: oficialsEmails[primerSeleccionat] || "",
-        telefon: oficialsTelefons[primerSeleccionat] || "",
-      };
+      extra = mode === "duplicar" ? {
+        to_email: [...new Set(seleccionats.map((nom) => oficialsEmails[nom]).filter(Boolean))].join(", "),
+        telefon: [...new Set(seleccionats.map((nom) => oficialsTelefons[nom]).filter(Boolean))].join(", "),
+      } : {
+        to_email: oficialsEmails[primerSeleccionat] || "",
+        telefon: oficialsTelefons[primerSeleccionat] || "",
+      };
     }
 
     setFormData((prev) => ({
@@ -433,8 +544,11 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     }));
   };
 
-  const sincronitzarLlocsFeina = (llocs) => {
-    setFormData((prev) => ({
+  const sincronitzarLlocsFeina = (llocs) => {
+    if (clauRuta(normalitzarLlocsFeina({ llocsFeina: llocs })) !== clauRuta(llocsFeinaActius)) {
+      invalidarRuta();
+    }
+    setFormData((prev) => ({
       ...prev,
       llocsFeina: llocs,
       ruta: formatLlocsFeina(llocs),
@@ -546,8 +660,9 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     return [...new Set([...suggerimentsHabituals, ...variants])].slice(0, 6);
   }, [formData.llocsFeina, llocSuggerimentsActiu]);
 
-  const handleReset = () => {
-    setFormData(isDemoMode ? getDemoFormData() : emptyFormData);
+  const handleReset = () => {
+    if (savedResultRef.current) return;
+    setFormData(isDemoMode ? getDemoFormData() : emptyFormData);
     setRouteCoords([]);
     setRouteMarkers([]);
     setRouteStatus("idle");
@@ -558,13 +673,13 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
   };
 
   const crearComunicatAmbReferencia = async (dadesAmbMapa, any, mes, yyyymm) => {
-    return runTransaction(db, async (transaction) => {
+    const nouComunicatRef = doc(collection(db, "comunicatsNova"));
+    return runTransaction(db, async (transaction) => {
       const counterRef = doc(
         db,
         isDemoMode ? "comptadorsComunicatsDemo" : "comptadorsComunicats",
         yyyymm
       );
-      const nouComunicatRef = doc(collection(db, "comunicatsNova"));
       const counterSnap = await transaction.get(counterRef);
 
       const ultimNumero = counterSnap.exists()
@@ -612,32 +727,40 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     return { id, referenciaComunicat };
   };
 
-  const enviarCorreuComunicat = async (dadesPerCorreu) => {
-    if (isDemoMode) {
-      console.info("Mode demo: enviament de correu simulat.", dadesPerCorreu);
-      setStatusMsg("Simulació d'enviament realitzada.");
-      return;
-    }
-
-    const emailsResponsables = obtenirEmailsOficialsResponsables();
-    const destinataris = emailsResponsables.length > 0
+  const obtenirDestinataris = (dadesPerCorreu) => {
+    const emailsResponsables = obtenirEmailsOficialsResponsables();
+    const destinataris = mode === "duplicar"
+      ? separarEmails(dadesPerCorreu.to_email)
+      : emailsResponsables.length > 0
       ? emailsResponsables
       : dadesPerCorreu.to_email && esEmailValid(dadesPerCorreu.to_email)
       ? [dadesPerCorreu.to_email]
-      : [];
+      : [];
 
-    if (destinataris.length === 0) {
+    if (destinataris.length === 0 || destinataris.some((email) => !esEmailValid(email))) {
       console.warn("No s'ha trobat cap email vàlid per enviar el comunicat.");
       throw new Error("No hi ha cap destinatari vàlid per enviar el comunicat.");
     }
 
-    for (const email of destinataris) {
-      await emailjs.send(
+    return destinataris;
+  };
+
+  const enviarCorreuComunicat = async (dadesPerCorreu, destinatarisFixats) => {
+    if (isDemoMode) {
+      setStatusMsg("Simulació d'enviament realitzada.");
+      return;
+    }
+    const destinataris = destinatarisFixats || obtenirDestinataris(dadesPerCorreu);
+    pendingEmailRef.current.destinataris = destinataris;
+    for (const email of destinataris) {
+      if (sentEmailsRef.current.has(email)) continue;
+      await emailjs.send(
         "service_7axqbdq",
         "template_t97ykta",
         { ...dadesPerCorreu, to_email: email },
-        "yDXUC6WUOq8lxjst_"
-      );
+        "yDXUC6WUOq8lxjst_"
+      );
+      sentEmailsRef.current.add(email);
     }
   };
 
@@ -645,9 +768,9 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     const llocs = (Array.isArray(destinations) ? destinations : [destinations])
       .map((destination) => netejarPaisEspanya(destination))
       .filter(Boolean);
-    const routeKey = llocs.join("|").toLowerCase();
+    const routeKey = clauRuta(llocs);
 
-    if (llocs.length === 0 || routeKey.length < 4) {
+    if (llocs.length === 0 || llocs.join("|").length < 4) {
       routeAbortRef.current?.abort();
       lastRouteRequestRef.current = "";
       setRouteCoords([]);
@@ -668,7 +791,10 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
     routeAbortRef.current = controller;
     lastRouteRequestRef.current = routeKey;
 
-    setRouteStatus("loading");
+    routeCompleteRef.current = false;
+    setRouteCoords([]);
+    setRouteMarkers([]);
+    setRouteStatus("loading");
     setRouteErrorMsg("");
     setStatusMsg("Carregant ruta...");
 
@@ -733,7 +859,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
       }
 
       const routeRes = await fetch(
-        "https://api.openrouteservice.org/v2/directions/driving-car/geojson",
+        `https://api.openrouteservice.org/v2/directions/${ROUTE_PROFILE}/geojson`,
         {
           method: "POST",
           headers: {
@@ -768,7 +894,10 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
         throw new Error("La ruta rebuda no conté coordenades vàlides.");
       }
 
-      setRouteCoords(polyline);
+      if (controller.signal.aborted || routeAbortRef.current !== controller ||
+          lastRouteRequestRef.current !== routeKey) return;
+      routeCompleteRef.current = llocsFallits.length === 0;
+      setRouteCoords(polyline);
       setRouteMarkers(puntsValids);
       setRouteStatus("success");
       setRouteErrorMsg("");
@@ -781,9 +910,8 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
         setStatusMsg("Ruta carregada ✅");
       }
     } catch (err) {
-      if (err.name === "AbortError") return;
-
-      console.error("Error generant la ruta:", err.message);
+      if (routeAbortRef.current !== controller || lastRouteRequestRef.current !== routeKey) return;
+      console.error("Error generant la ruta:", err.message);
       setRouteCoords([]);
       setRouteMarkers([]);
       setRouteStatus("error");
@@ -819,17 +947,38 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
 const handleSubmit = async (e) => {
   e.preventDefault();
 
-  if (enviant) return;
+  if (submitLockRef.current || carregant || errorCarrega || !configCarregada) return;
+  submitLockRef.current = true;
+  const accio = e.nativeEvent?.submitter?.value;
+  const haDeReenviar = mode === "crear" ||
+    (mode === "editar" && accio === "reenviar") ||
+    (mode === "duplicar" && accio === "enviar");
 
-  const haDeReenviar =
-    !editId || e.nativeEvent?.submitter?.value === "reenviar";
-
-  setEnviant(true);
+  setEnviant(true);
   console.log("SUBMIT EXECUTAT");
 
-  try {
-    let imgMapa = "";
-    const rutaAmbError = routeStatus === "error";
+  try {
+    // A failed email never repeats persistence, even after a partial multi-recipient send.
+    if (pendingEmailRef.current) {
+      await enviarCorreuComunicat(pendingEmailRef.current.dades, pendingEmailRef.current.destinataris);
+      alert("✅ Comunicat ja desat. Correu enviat correctament.");
+      navigate("/database", { replace: true });
+      return;
+    }
+    if (savedResultRef.current) return;
+    let destinataris;
+    if (haDeReenviar && !isDemoMode) {
+      try {
+        destinataris = obtenirDestinataris(formData);
+      } catch {
+        alert("❌ Revisa els destinataris abans de desar i enviar. També pots desar sense correu.");
+        return;
+      }
+    }
+    let imgMapa = "";
+    const rutaVigent = routeStatus === "success" && routeCoords.length >= 2 &&
+      lastRouteRequestRef.current === clauRuta(normalitzarLlocsFeina(formData));
+    const rutaAmbError = !rutaVigent;
 
     try {
       if (rutaAmbError) {
@@ -860,12 +1009,12 @@ const handleSubmit = async (e) => {
       console.error("❌ Error capturant mapa:", error);
     }
 
-    if (imgMapa.length > 45000) {
-      alert("❌ La imatge del mapa encara és massa gran per EmailJS.");
-      return;
-    }
+    if (imgMapa.length > 45000 && haDeReenviar) {
+      alert("❌ La imatge del mapa encara és massa gran per EmailJS.");
+      return;
+    }
 
-    const mapaPerCorreu = imgMapa || (rutaAmbError ? generarImatgeMapaNoDisponible() : "");
+    const mapaPerCorreu = imgMapa || (rutaAmbError && haDeReenviar ? generarImatgeMapaNoDisponible() : "");
     const llocsNormalitzats = normalitzarLlocsFeina(formData);
     const llocsText = formatLlocsFeina(llocsNormalitzats);
     const etiquetaLlocs =
@@ -887,7 +1036,9 @@ const handleSubmit = async (e) => {
       llocsFeina: llocsNormalitzats,
       ruta: llocsText,
       mapa: imgMapa,
-      rutaCoords: routeStatus === "success" ? convertirRutaPerFirestore(routeCoords) : [],
+      rutaCoords: rutaVigent ? convertirRutaPerFirestore(routeCoords) : [],
+      rutaClau: rutaVigent ? clauRuta(llocsNormalitzats) : "",
+      rutaCompleta: rutaVigent && routeCompleteRef.current,
       updatedAt: isDemoMode ? new Date().toISOString() : serverTimestamp(),
     };
 
@@ -900,8 +1051,9 @@ const handleSubmit = async (e) => {
 
       if (isDemoMode) {
         saveDemoComunicatLocal({
-          ...dadesPerActualitzar,
-          id: editId,
+          ...getDemoComunicatLocal(editId),
+          ...dadesPerActualitzar,
+          id: editId,
           updatedAt: new Date().toISOString(),
         });
       } else {
@@ -917,7 +1069,8 @@ const handleSubmit = async (e) => {
             mes,
             yyyymm
           );
-      dadesAmbMapa.referenciaComunicat = resultat.referenciaComunicat;
+      savedResultRef.current = resultat;
+      dadesAmbMapa.referenciaComunicat = resultat.referenciaComunicat;
     }
 
     const referenciaPerCorreu = referenciaVisible(dadesAmbMapa);
@@ -960,12 +1113,16 @@ const handleSubmit = async (e) => {
         : dadesAmbMapa.matricula || "",
     };
 
-    if (haDeReenviar) {
-      await enviarCorreuComunicat(dadesPerCorreu);
-    }
+    savedResultRef.current ||= { id: editId, referenciaComunicat: referenciaVisible(dadesAmbMapa) };
+    if (haDeReenviar) {
+      pendingEmailRef.current = { dades: dadesPerCorreu, destinataris };
+      await enviarCorreuComunicat(dadesPerCorreu, destinataris);
+    }
 
-    alert(
-      isDemoMode
+    alert(
+      mode === "duplicar" && !haDeReenviar
+        ? "✅ Nou comunicat desat sense enviar correu."
+        : isDemoMode
         ? haDeReenviar
           ? "✅ Comunicat demo desat. Simulació d'enviament realitzada."
           : "✅ Comunicat demo actualitzat correctament!"
@@ -977,14 +1134,34 @@ const handleSubmit = async (e) => {
     navigate("/database");
   } catch (err) {
     console.error("Error enviant o desant:", err);
-    alert("❌ Hi ha hagut un error en desar o enviar el formulari.");
-  } finally {
-    setEnviant(false);
+    if (savedResultRef.current && pendingEmailRef.current) {
+      setCorreuPendent(true);
+      setStatusMsg(`Comunicat ${savedResultRef.current.referenciaComunicat} desat. Ha fallat el correu. Reintenta els destinataris pendents o torna a l'històric.`);
+      // Keep the persisted ID in the URL, so refresh cannot turn a retry into another create.
+      navigate(`/editar/${savedResultRef.current.id}`, {
+        replace: true,
+        state: { correuPendent: {
+          id: savedResultRef.current.id,
+          entorn: isDemoMode ? DEMO_ENV : REAL_ENV,
+          dades: pendingEmailRef.current.dades,
+          destinataris: pendingEmailRef.current.destinataris,
+          enviats: [...sentEmailsRef.current],
+        } },
+      });
+      alert("⚠️ El comunicat ja està desat. Ha fallat el correu; el reintent no crearà cap altre comunicat.");
+    } else {
+      alert("❌ Hi ha hagut un error en desar el formulari.");
+    }
+  } finally {
+    submitLockRef.current = false;
+    setEnviant(false);
   }
 };
 
-  const blocOpcions = (label, valors, setFunc, camp, campConfig) => (
-    <div className="config-section">
+  const blocOpcions = (label, valors, setFunc, camp, campConfig) => {
+    const opcions = [...new Set([...valors, ...(opcionsHeretades[camp] || []), ...(formData[camp] || [])])];
+    return (
+    <div className="config-section">
       <label className="section-title">{label}</label>
 
       <div className="config-row">
@@ -1026,10 +1203,10 @@ const handleSubmit = async (e) => {
       </div>
 
       <div className="selection-list">
-        {valors.length === 0 ? (
+        {opcions.length === 0 ? (
           <p className="empty-options">No hi ha opcions configurades.</p>
         ) : (
-          valors.map((v, i) => {
+          opcions.map((v, i) => {
             const seleccionats = Array.isArray(formData[camp])
               ? formData[camp]
               : formData[camp]
@@ -1054,10 +1231,11 @@ const handleSubmit = async (e) => {
         )}
       </div>
     </div>
-  );
+  );
+  };
 
-  return (
-    <div className="app-container">
+  return (
+    <div className="app-container">
       <div className="form-header">
         {isDemoMode ? (
           <div className="demo-logo">DEMO</div>
@@ -1072,8 +1250,8 @@ const handleSubmit = async (e) => {
         )}
 
       <h1>
-        {isDemoMode
-          ? editId
+        {mode === "duplicar" ? "Duplicar comunicat de feina" : isDemoMode
+          ? editId
             ? "Editar comunicat demo · Brigada Test"
             : "Comunicat demo · Brigada Test"
           : editId
@@ -1088,7 +1266,21 @@ const handleSubmit = async (e) => {
       {topActions && <div className="top-nav-actions">{topActions}</div>}
       </div>
 
-      <form onSubmit={handleSubmit} className="form-card">
+      {carregant && <p role="status">Carregant comunicat...</p>}
+      {errorCarrega && <p role="alert">No s'ha pogut carregar el comunicat.</p>}
+      {correuPendent && <div role="alert">
+        <p>{statusMsg}</p>
+        <button type="button" disabled={enviant} onClick={() => handleSubmit({ preventDefault() {} })}>
+          Reintentar enviament pendent
+        </button>
+        <button type="button" disabled={enviant} onClick={() => navigate("/database", { replace: true })}>
+          Tornar a l'històric
+        </button>
+      </div>}
+      {errorCarrega && <button type="button" onClick={() => navigate("/database")}>Tornar a l'històric</button>}
+      <form onSubmit={handleSubmit} className="form-card">
+      <fieldset disabled={enviant || carregant || errorCarrega || !configCarregada || correuPendent}
+        style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: "grid", gap: "16px" }}>
         <div className="input-group">
           <label className="field-label">Data</label>
         <input
@@ -1294,7 +1486,7 @@ const handleSubmit = async (e) => {
           </label>
         <input
           type="text"
-          value={valorEmailsVisible}
+          value={mode === "duplicar" ? formData.to_email : valorEmailsVisible}
           onChange={(e) => handleChange("to_email", e.target.value)}
           placeholder="Email destinatari"
             className="form-input"
@@ -1309,26 +1501,37 @@ const handleSubmit = async (e) => {
           </label>
         <input
           type="text"
-          value={valorTelefonsVisible}
+          value={mode === "duplicar" ? formData.telefon : valorTelefonsVisible}
           onChange={(e) => handleChange("telefon", e.target.value)}
           placeholder="Telèfon destinatari"
             className="form-input"
         />
         </div>
 
-        <div className="form-actions">
+        {mode === "duplicar" && <>
+          {contactesAntics && (contactesAntics.to_email || contactesAntics.telefon) &&
+            <p>Contactes del comunicat original: {contactesAntics.to_email} · {contactesAntics.telefon}</p>}
+          <label className="field-label">Correu de resposta
+            <input className="form-input" value={formData.reply_to}
+              onChange={(e) => handleChange("reply_to", e.target.value)} />
+          </label>
+        </>}
+        <div className="form-actions">
           <button
             type="submit"
             value="desar"
             disabled={enviant}
             className="button-primary"
           >
-            {enviant ? "Desant..." : editId ? "Desar canvis" : "Enviar"}
+            {enviant ? "Desant..." : mode === "duplicar" ? "Desar nou comunicat" : editId ? "Desar canvis" : "Enviar"}
           </button>
 
-          {editId && (
-            <button
-              type="submit"
+          {mode === "duplicar" && <button type="submit" value="enviar" className="button-secondary">
+            Desar i enviar
+          </button>}
+          {editId && (
+            <button
+              type="submit"
               value="reenviar"
               disabled={enviant}
               className="button-secondary"
@@ -1337,10 +1540,10 @@ const handleSubmit = async (e) => {
             </button>
           )}
 
-          {editId && (
-            <button
-              type="button"
-              onClick={() => navigate("/database")}
+          {sourceId && (
+            <button
+              type="button"
+              onClick={() => navigate("/database")}
               disabled={enviant}
               className="button-secondary"
             >
@@ -1348,7 +1551,7 @@ const handleSubmit = async (e) => {
             </button>
           )}
 
-          {!editId && (
+          {mode === "crear" && (
             <button
               type="button"
               onClick={handleReset}
@@ -1369,7 +1572,8 @@ const handleSubmit = async (e) => {
         </div>
 
         {statusMsg && <p className="status-message">{statusMsg}</p>}
-      </form>
+      </fieldset>
+      </form>
 
       <div className="map-card">
         {routeStatus === "error" ? (
@@ -1380,7 +1584,7 @@ const handleSubmit = async (e) => {
               type="button"
               onClick={() => fetchRoute(llocsFeinaActius, { force: true })}
               className="button-secondary route-retry-button"
-              disabled={routeStatus === "loading"}
+              disabled={routeStatus === "loading" || enviant || carregant || correuPendent}
             >
               Reintentar ruta
             </button>
@@ -1434,7 +1638,8 @@ const handleSubmit = async (e) => {
         comunicat={formData}
         mapaRef={mapRef}
         isDemoMode={isDemoMode}
-        mapaNoDisponible={routeStatus === "error"}
+        mapaNoDisponible={routeStatus !== "success" || lastRouteRequestRef.current !== clauRuta(llocsFeinaActius)}
+        mapaClau={clauRuta(llocsFeinaActius)}
         missatgeMapaNoDisponible={MISSATGE_MAPA_NO_GENERAT}
         onPrintReady={(handlePrint) => {
           impressioRef.current = handlePrint;

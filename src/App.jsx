@@ -56,6 +56,11 @@ function App() {
         />
 
         <Route
+          path="/duplicar/:origenId"
+          element={user ? <AppFinalFormulari key="duplicar" isDemoMode={isDemoMode} /> : <Navigate to="/" />}
+        />
+
+        <Route
           path="/editar/:id"
           element={user ? <AppFinalFormulari isDemoMode={isDemoMode} /> : <Navigate to="/" />}
         />

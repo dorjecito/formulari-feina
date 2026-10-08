@@ -7,6 +7,7 @@ export default function ImpressioComunicat({
  mapaRef,
  isDemoMode = false,
  mapaNoDisponible = false,
+ mapaClau = "",
  missatgeMapaNoDisponible = "No s'ha pogut generar el mapa de la ruta. El comunicat és igualment vàlid.",
  onPrintReady,
 }) {
@@ -19,7 +20,13 @@ export default function ImpressioComunicat({
 	 const etiquetaLlocsFeina =
 	   llocsFeina.length > 1 ? "Llocs de feina" : "Lloc de feina";
 
+ const mapaActualRef = useRef(null);
+ mapaActualRef.current = `${mapaClau}|${mapaNoDisponible}`;
+ useEffect(() => { setMapaImg(""); }, [mapaClau, mapaNoDisponible]);
+
  const handlePrint = async () => {
+   const versio = mapaActualRef.current;
+   setMapaImg("");
    if (mapaNoDisponible) {
      setMapaImg("");
    } else if (mapaRef && mapaRef.current) {
@@ -29,11 +36,12 @@ export default function ImpressioComunicat({
          : mapaRef.current;
      const mapCanvas = await html2canvas(mapElement);
      const imgData = mapCanvas.toDataURL('image/png');
+     if (versio !== mapaActualRef.current) return;
      setMapaImg(imgData);
    }
 
    setTimeout(() => {
-     window.print();
+     if (versio === mapaActualRef.current) window.print();
    }, 500);
  };
 
