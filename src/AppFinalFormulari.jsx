@@ -35,10 +35,11 @@ import {
 } from "./llocsFeina";
 import ImpressioComunicat from "./ImpressioComunicat";
 
-const center = [39.4924, 2.89174]; // Carrer de Castella, Llucmajor
+const ROUTE_ORIGIN = Object.freeze([39.4851659, 2.8859026]); // [latitud, longitud]
+const ROUTE_ORIGIN_TOLERANCE_METERS = 250;
 const ROUTE_PROFILE = "driving-car";
 const clauRuta = (llocs) => JSON.stringify({
-  origen: center,
+  origen: ROUTE_ORIGIN,
   perfil: ROUTE_PROFILE,
   llocs: llocs.map((lloc) => netejarPaisEspanya(lloc).toLowerCase()),
 });
@@ -51,10 +52,19 @@ const dataMadrid = (instant = new Date()) => {
 };
 const coordenadaValida = (punt) => punt && Number.isFinite(punt.lat) &&
   Number.isFinite(punt.lng) && Math.abs(punt.lat) <= 90 && Math.abs(punt.lng) <= 180;
+const distanciaMetres = ([lat1, lon1], [lat2, lon2]) => {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const dLat = radians(lat2 - lat1);
+  const dLon = radians(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(lat1)) *
+    Math.cos(radians(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 const rutaReutilitzable = (dades, llocs) => llocs.length > 0 &&
   dades.rutaClau === clauRuta(llocs) && dades.rutaCompleta === true &&
   Array.isArray(dades.rutaCoords) && dades.rutaCoords.length >= 2 &&
-  dades.rutaCoords.every(coordenadaValida);
+  dades.rutaCoords.every(coordenadaValida) &&
+  distanciaMetres(ROUTE_ORIGIN, [dades.rutaCoords[0].lat, dades.rutaCoords[0].lng]) <= ROUTE_ORIGIN_TOLERANCE_METERS;
 const separarEmails = (valor = "") => [...new Set(valor.split(/[;,\s]+/).filter(Boolean))];
 
 const emptyFormData = {
@@ -214,6 +224,16 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
   const impressioRef = useRef(null);
   const lastRouteRequestRef = useRef("");
   const routeAbortRef = useRef(null);
+
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || routeCoords.length < 2) return;
+    const points = [
+      ROUTE_ORIGIN,
+      ...routeCoords,
+      ...routeMarkers.map((marker) => marker.position),
+    ];
+    mapRef.current.fitBounds(L.latLngBounds(points), { padding: [20, 20] });
+  }, [mapReady, routeCoords, routeMarkers]);
 
   const invalidarRuta = () => {
     routeAbortRef.current?.abort();
@@ -406,7 +426,31 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
           setContactesAntics({ to_email: data.to_email || "", telefon: data.telefon || "" });
         }
         if (rutaReutilitzable(data, llocsNormalitzats)) {
-          setRouteCoords(convertirRutaDesDeFirestore(data.rutaCoords));
+          const coordsDesades = convertirRutaDesDeFirestore(data.rutaCoords);
+          setRouteCoords(coordsDesades);
+          const routeKey = clauRuta(llocsNormalitzats);
+          const marcadors = [];
+          for (const [index, lloc] of llocsNormalitzats.entries()) {
+            let marcador = null;
+            for (const variant of crearVariantsRuta(lloc)) {
+              try {
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(variant)}&format=json&limit=1`);
+                if (!response.ok) continue;
+                const [result] = await response.json();
+                const lat = Number.parseFloat(result?.lat);
+                const lon = Number.parseFloat(result?.lon);
+                if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                  marcador = { nom: netejarPaisEspanya(lloc), coords: [lon, lat], position: [lat, lon], index };
+                  break;
+                }
+              } catch {
+                // A route can still be displayed when a destination marker cannot be geocoded.
+              }
+            }
+            if (marcador) marcadors.push(marcador);
+          }
+          if (!actiu) return;
+          if (clauRuta(llocsNormalitzats) === routeKey) setRouteMarkers(marcadors);
           lastRouteRequestRef.current = clauRuta(llocsNormalitzats);
           routeCompleteRef.current = true;
           setRouteStatus("success");
@@ -867,7 +911,7 @@ export default function AppFinalFormulari({ topActions = null, isDemoMode = fals
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            coordinates: [[2.89174, 39.4924], ...puntsValids.map((punt) => punt.coords)],
+            coordinates: [[ROUTE_ORIGIN[1], ROUTE_ORIGIN[0]], ...puntsValids.map((punt) => punt.coords)],
           }),
           signal: controller.signal,
         }
@@ -1591,7 +1635,7 @@ const handleSubmit = async (e) => {
           </div>
         ) : (
           <MapContainer
-            center={center}
+            center={ROUTE_ORIGIN}
             zoom={13}
             preferCanvas={true}
             style={{ height: "300px", width: "100%" }}
@@ -1602,9 +1646,12 @@ const handleSubmit = async (e) => {
           >
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <Marker
-              position={center}
+              position={ROUTE_ORIGIN}
               icon={L.icon({
                 iconUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png",
+                iconSize: [25, 41],
+                iconAnchor: [12, 41],
+                popupAnchor: [1, -34],
               })}
             >
               <Popup>Sortida: Carrer de Castella, Llucmajor</Popup>
@@ -1616,6 +1663,9 @@ const handleSubmit = async (e) => {
                 position={punt.position}
                 icon={L.icon({
                   iconUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png",
+                  iconSize: [25, 41],
+                  iconAnchor: [12, 41],
+                  popupAnchor: [1, -34],
                 })}
               >
                 <Popup>

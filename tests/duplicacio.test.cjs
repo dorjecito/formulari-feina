@@ -9,7 +9,7 @@ const { transformSync } = require('esbuild');
 const React = require('react');
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'src/AppFinalFormulari.jsx'), 'utf8');
-const compiled = transformSync(source + '\nexport { dataMadrid, clauRuta, rutaReutilitzable };', { loader: 'jsx', format: 'cjs' }).code;
+const compiled = transformSync(source + '\nexport { dataMadrid, ROUTE_ORIGIN, ROUTE_ORIGIN_TOLERANCE_METERS, clauRuta, rutaReutilitzable };', { loader: 'jsx', format: 'cjs' }).code;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const config = {
   responsables: ['Cap actual'], oficialsResponsables: ['Oficial actual'], oficials: ['Operari actual'],
@@ -236,22 +236,55 @@ test('demo duplicate and later edit retain provenance and original, without Fire
   assert.equal(saved.duplicatDeId, 'original'); assert.equal(saved.createdAt, copy.createdAt);
 });
 test('route cache requires matching order, origin, profile, completeness and valid coordinates', () => {
-  const { clauRuta, rutaReutilitzable } = harness().exports;
+  const { ROUTE_ORIGIN, ROUTE_ORIGIN_TOLERANCE_METERS, clauRuta, rutaReutilitzable } = harness().exports;
   const places = ['Carrer primer', 'Carrer segon'];
-  const data = { rutaClau: clauRuta(places), rutaCompleta: true, rutaCoords: [{ lat: 39.49, lng: 2.89 }, { lat: 39.5, lng: 2.9 }] };
+  assert.deepEqual(plain(ROUTE_ORIGIN), [39.4851659, 2.8859026]);
+  assert.equal(ROUTE_ORIGIN_TOLERANCE_METERS, 250);
+  const data = { rutaClau: clauRuta(places), rutaCompleta: true, rutaCoords: [{ lat: 39.4852, lng: 2.8859 }, { lat: 39.5, lng: 2.9 }] };
   assert.equal(rutaReutilitzable(data, places), true);
   assert.equal(rutaReutilitzable(data, [...places].reverse()), false);
   assert.equal(rutaReutilitzable({ ...data, rutaCompleta: false }, places), false);
   assert.equal(rutaReutilitzable({ ...data, rutaClau: undefined }, places), false);
-  for (const key of [data.rutaClau.replace('driving-car', 'walking'), data.rutaClau.replace('39.4924', '40')])
+  for (const key of [data.rutaClau.replace('driving-car', 'walking'), data.rutaClau.replace('39.4851659', '40')])
     assert.equal(rutaReutilitzable({ ...data, rutaClau: key }, places), false);
   assert.equal(rutaReutilitzable({ ...data, rutaCoords: [{ lat: NaN, lng: 3 }, { lat: 95, lng: 3 }] }, places), false);
+  assert.equal(rutaReutilitzable({ ...data, rutaCoords: [{ lat: 39.4924, lng: 2.89174 }, ...data.rutaCoords.slice(1)] }, places), false);
+});
+test('map, route key and OpenRouteService request use the centralized origin in their required coordinate order', async () => {
+  const h = harness({ fetchRoute: async url => url.includes('nominatim')
+    ? { ok: true, json: async () => [{ lat: '39.49', lon: '2.88' }] }
+    : { ok: true, json: async () => ({ features: [{ geometry: { coordinates: [[2.8859, 39.4852], [2.88, 39.49]] } }] }) } });
+  await h.settle();
+  assert.deepEqual(plain(h.find(n => n.type === 'MapContainer').props.center), [39.4851659, 2.8859026]);
+  assert.deepEqual(plain(h.find(n => n.type === 'Marker').props.position), [39.4851659, 2.8859026]);
+  await h.timers(700);
+  const request = h.requests.find(([url]) => url.includes('openrouteservice'));
+  assert.deepEqual(plain(JSON.parse(request[1].body).coordinates[0]), [2.8859026, 39.4851659]);
+  const key = JSON.parse(h.exports.clauRuta(['Carrer primer', 'Carrer segon']));
+  assert.deepEqual(plain(key.origen), [39.4851659, 2.8859026]);
+});
+test('route markers use Leaflet pin-tip anchors and a recovered route restores destination markers and fits bounds', async () => {
+  const key = harness().exports.clauRuta(['Carrer primer', 'Carrer segon']);
+  const h = harness({ data: { ...original, rutaClau: key, rutaCompleta: true,
+    rutaCoords: [{ lat: 39.4852, lng: 2.8859 }, { lat: 39.49, lng: 2.88 }] },
+    fetchRoute: async () => ({ ok: true, json: async () => [{ lat: '39.49', lon: '2.88' }] }) });
+  const bounds = [];
+  await h.settle();
+  const map = h.find(n => n.type === 'MapContainer');
+  map.props.whenReady({ target: { fitBounds: value => bounds.push(value), invalidateSize() {}, getContainer() {} } });
+  await h.settle();
+  const markers = h.nodes().filter(n => n.type === 'Marker');
+  assert.equal(markers.length, 3);
+  assert.deepEqual(plain(markers[0].props.icon.iconAnchor), [12, 41]);
+  assert.deepEqual(plain(markers[1].props.icon.iconAnchor), [12, 41]);
+  assert.ok(bounds.length > 0);
+  assert.ok(bounds.at(-1).some(point => point[0] === 39.4852 && point[1] === 2.8859));
 });
 test('verified route is reused without fetch and invalidates immediately on destination edit', async () => {
   const key = harness().exports.clauRuta(['Carrer primer', 'Carrer segon']);
   const h = harness({ data: { ...original, rutaClau: key, rutaCompleta: true,
-    rutaCoords: [{ lat: 39.49, lng: 2.89 }, { lat: 39.5, lng: 2.9 }], mapa: 'old-image' } });
-  await h.settle(); await h.timers(700); assert.equal(h.requests.length, 0);
+    rutaCoords: [{ lat: 39.4852, lng: 2.8859 }, { lat: 39.5, lng: 2.9 }], mapa: 'old-image' } });
+  await h.settle(); await h.timers(700); assert.equal(h.requests.some(([url]) => url.includes('openrouteservice')), false);
   assert.ok(h.find(n => n.type === 'Polyline'));
   await h.change(n => n.type === 'input' && n.props.value === 'Carrer primer', 'Nou carrer');
   assert.equal(h.find(n => n.type === 'Polyline'), undefined);
@@ -298,7 +331,7 @@ test('reload after an email failure resumes against the saved ID and retains suc
 test('valid route is captured from current map and persisted with verification metadata', async () => {
   const key = harness().exports.clauRuta(['Carrer primer', 'Carrer segon']);
   const h = harness({ data: { ...original, rutaClau: key, rutaCompleta: true,
-    rutaCoords: [{ lat: 39.49, lng: 2.89 }, { lat: 39.5, lng: 2.9 }], mapa: 'old-image' } });
+    rutaCoords: [{ lat: 39.4852, lng: 2.8859 }, { lat: 39.5, lng: 2.9 }], mapa: 'old-image' } });
   await h.settle();
   h.find(n => n.type === 'MapContainer').props.whenReady({ target: { fitBounds() {}, invalidateSize() {}, getContainer() {} } });
   await h.settle(); await h.submit('desar');
